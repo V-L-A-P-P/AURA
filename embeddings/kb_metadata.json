@@ -1,0 +1,44 @@
+[
+  {
+    "file": "10_Интерфейс_Modbus-RTU_chunk_1.txt"
+  },
+  {
+    "file": "1_Датчик_давления_ПД-Эко_v2_chunk_1.txt"
+  },
+  {
+    "file": "2_Манипулятор_Аист-9_chunk_1.txt"
+  },
+  {
+    "file": "3_Контроллер_КТ-400_chunk_1.txt"
+  },
+  {
+    "file": "4_Нейрочип_Q-Neuro-Δ_chunk_1.txt"
+  },
+  {
+    "file": "5_Система_технического_зрения_Визор-X_chunk_1.txt"
+  },
+  {
+    "file": "6_Линейный_привод_LP-12_chunk_1.txt"
+  },
+  {
+    "file": "7_Промышленная_шина_EtherCAT_chunk_1.txt"
+  },
+  {
+    "file": "8_Панель_оператора_OP-500_chunk_1.txt"
+  },
+  {
+    "file": "9_Модуль_питания_PSU-24_chunk_1.txt"
+  },
+  {
+    "file": "manual_sensor_fixed_chunk_1.txt"
+  },
+  {
+    "file": "report_robotics_fixed_chunk_1.txt"
+  },
+  {
+    "file": "study_neurochips_fixed_chunk_1.txt"
+  },
+  {
+    "file": "study_neurochips_fixed_chunk_2.txt"
+  }
+]

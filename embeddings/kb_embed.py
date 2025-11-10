@@ -6,14 +6,12 @@ kb_embed.py — создание эмбеддингов и FAISS-индекса 
  2. Кодирование текстов через SentenceTransformer
  3. Сохранение векторов, метаданных и индекса FAISS
 """
-
 from pathlib import Path
 import numpy as np
 import json
 import faiss
 from sentence_transformers import SentenceTransformer
 from utils.config import CHUNKS_DIR, EMBEDDINGS_DIR, EMBEDDING_MODEL
-
 
 # ==========================
 # 📂 Загрузка чанков

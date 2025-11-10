@@ -32,7 +32,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 100))   # перекрытие м
 # Можно указать другие модели через .env без изменения кода
 EMBEDDING_MODEL = os.getenv(
     "EMBEDDING_MODEL",
-    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    "cointegrated/rubert-tiny2"#ai-forever/sbert_large_nlu_ru"
 )
 GENERATION_MODEL = os.getenv(
     "GENERATION_MODEL",
