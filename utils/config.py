@@ -25,7 +25,7 @@ CHUNK_SIZE     = int(os.getenv("CHUNK_SIZE",     200))  # число слов и
 CHUNK_OVERLAP  = int(os.getenv("CHUNK_OVERLAP",  50))
 
 # === Настройки моделей ===
-EMBEDDING_MODEL   = os.getenv("EMBEDDING_MODEL",   "cointegrated/rubert-tiny2")
+EMBEDDING_MODEL   = os.getenv("EMBEDDING_MODEL",   "ai-forever/sbert_large_nlu_ru")#"cointegrated/rubert-tiny2")
 GENERATION_MODEL  = os.getenv("GENERATION_MODEL",  "unsloth/Llama-3.2-3B-Instruct")
 
 # === Настройки FAISS / индексов ===
@@ -35,6 +35,8 @@ QA_COMBINED_INDEX    = EMBEDDINGS_DIR / "qa_combined_index.faiss"
 KB_INDEX_PATH        = EMBEDDINGS_DIR / "kb_index.faiss"
 QA_METADATA_PATH     = EMBEDDINGS_DIR / "qa_metadata.json"
 KB_METADATA_PATH     = EMBEDDINGS_DIR / "kb_metadata.json"
+HYBRID_ALPHA     = float(os.getenv("HYBRID_ALPHA",  0.5))
+
 
 # === Логирование и отладка ===
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

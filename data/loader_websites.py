@@ -8,7 +8,7 @@ from pathlib import Path
 import json
 import logging
 from utils.config import RAW_DIR, PROCESSED_DIR, CHUNKS_DIR
-from utils.chunk_utils import split_text_to_chunks
+from utils.chunk_utils import split_text_to_chunks, split_text_to_chunks_advanced
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def process_and_chunk(
         title  = row["title"]
         url    = row["url"]
         text   = row["text"]
-        chunks = split_text_to_chunks(text, max_words=max_words, overlap_words=overlap_words)
+        chunks = split_text_to_chunks_advanced(text, max_words=max_words, overlap_words=overlap_words, min_words=min_words)
         if not chunks:
             logger.warning(f"⚠️ Документ {web_id} не дал ни одного чанка.")
             continue
