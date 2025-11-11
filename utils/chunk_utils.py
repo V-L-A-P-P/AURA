@@ -1,102 +1,91 @@
 """
-chunk_utils.py — модуль для разбиения очищенных текстов на перекрывающиеся чанки.
-Используется после cleaner.py, перед построением эмбеддингов.
+chunk_utils.py — модуль для разбивки очищенных текстов на чанки.
+Используется после очистки/предобработки, перед построением эмбеддингов.
 """
 
 from pathlib import Path
-from utils.config import PROCESSED_DIR, CHUNKS_DIR, CHUNK_SIZE, CHUNK_OVERLAP
+import logging
+from typing import List, Union
+from utils.config import CHUNK_SIZE, CHUNK_OVERLAP, CHUNKS_DIR
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def create_chunks_from_text(
+def split_text_to_chunks(
     text: str,
-    chunk_size: int = CHUNK_SIZE,
-    overlap: int = CHUNK_OVERLAP
-) -> list[str]:
+    max_words: int = CHUNK_SIZE,
+    overlap_words: int = CHUNK_OVERLAP,
+    min_words: int = None
+) -> List[str]:
     """
-    Разбивает текст на перекрывающиеся чанки фиксированной длины (по символам).
-
-    Пример:
-        chunk_size=1000, overlap=100
-        -> чанк 1: символы [0:1000]
-        -> чанк 2: символы [900:1900]
+    Разбивает текст на чанки по словам:
+      - max_words      : максимальное число слов в чанке
+      - overlap_words  : перекрытие между чанками
+      - min_words      : минимальное число слов для разбивки; если текст короче — возвращается как единый чанок
+    Возвращает список чанков (каждый — строка).
     """
-    # Проверка на валидные параметры
-    if chunk_size <= 0:
+    if max_words <= 0:
         raise ValueError("CHUNK_SIZE должен быть > 0")
-    if overlap >= chunk_size:
+    if overlap_words >= max_words:
         raise ValueError("CHUNK_OVERLAP должен быть меньше CHUNK_SIZE")
 
-    text = text.strip()
-    if not text:
-        return []
+    words = text.split()
+    length = len(words)
+    if min_words is None:
+        min_words = max_words // 2
+    if length <= min_words:
+        logger.debug(f"Текст слишком короткий ({length} слов) — возвращаю весь как один чанок.")
+        return [text.strip()]
 
-    chunks = []
+    chunks: List[str] = []
     start = 0
-    text_length = len(text)
-
-    while start < text_length:
-        end = min(start + chunk_size, text_length)
-        chunk = text[start:end].strip()
-
-        # Добавляем только непустые чанки
+    while start < length:
+        end = min(start + max_words, length)
+        chunk = " ".join(words[start:end]).strip()
         if chunk:
             chunks.append(chunk)
+        if end >= length:
+            break
+        start += (max_words - overlap_words)
 
-        # Передвигаем окно с учётом перекрытия
-        start += chunk_size - overlap
-
+    logger.info(f"Разбито на {len(chunks)} чанков ({length} слов → max_words={max_words}, overlap={overlap_words})")
     return chunks
 
 
-def split_processed_texts(
-    input_dir: Path = PROCESSED_DIR,
-    output_dir: Path = CHUNKS_DIR,
+def save_chunks_from_files(
+    input_dir: Union[Path, str],
+    output_dir: Union[Path, str] = CHUNKS_DIR,
     chunk_size: int = CHUNK_SIZE,
     overlap: int = CHUNK_OVERLAP
 ) -> None:
     """
-    Делит очищенные тексты из processed/ на чанки и сохраняет их в chunks/.
-    Каждый чанк сохраняется в отдельный .txt файл с индексом.
-
-    Пример имени:
-        report_robotics_chunk_1.txt
+    Читает все .txt файлы из input_dir, разбивает каждый на чанки и
+    сохраняет их в output_dir как отдельные файлы.
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    txt_files = sorted(input_dir.glob("*.txt"))
+    input_path  = Path(input_dir)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
+    txt_files = sorted(input_path.glob("*.txt"))
     if not txt_files:
-        print(f"⚠️ В папке {input_dir} нет файлов для разбиения на чанки.")
+        logger.warning(f"⚠️ В папке {input_path} нет файлов для разбиения.")
         return
 
-    print(f"✂️ Найдено {len(txt_files)} файлов для разбиения.\n")
-
+    logger.info(f"✂️ Найдено {len(txt_files)} файлов для разбивки из {input_path}")
     for file_path in txt_files:
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                text = f.read()
-
+            text = file_path.read_text(encoding="utf-8")
             chunks = create_chunks_from_text(text, chunk_size, overlap)
-
             if not chunks:
-                print(f"⚠️ {file_path.name}: не удалось создать чанки (пустой текст).")
+                logger.warning(f"⚠️ {file_path.name}: не удалось создать чанки (пустой текст).")
                 continue
-
             base_name = file_path.stem.replace(" ", "_")
-
             for i, chunk in enumerate(chunks, start=1):
                 chunk_filename = f"{base_name}_chunk_{i}.txt"
-                chunk_path = output_dir / chunk_filename
-
-                with open(chunk_path, "w", encoding="utf-8") as f:
-                    f.write(chunk)
-
-            print(f"✅ {file_path.name}: создано {len(chunks)} чанков")
-
+                chunk_file = output_path / chunk_filename
+                chunk_file.write_text(chunk, encoding="utf-8")
+            logger.info(f"✅ {file_path.name}: создано {len(chunks)} чанков")
         except Exception as e:
-            print(f"❌ Ошибка при обработке {file_path.name}: {e}")
+            logger.error(f"❌ Ошибка при обработке {file_path.name}: {e}")
 
-    print("\n📂 Разбиение завершено. Проверьте папку:", output_dir.resolve())
-
-
-if __name__ == "__main__":
-    split_processed_texts()
+    logger.info(f"📂 Разбиение завершено. Проверьте папку: {output_path.resolve()}")
