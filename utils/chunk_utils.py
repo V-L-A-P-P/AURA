@@ -11,6 +11,7 @@ import re
 import nltk
 from typing import List
 from utils.config import CHUNK_SIZE, CHUNK_OVERLAP
+from utils.config import RAW_DIR, PROCESSED_DIR, CHUNKS_DIR
 
 # Скачиваем необходимые данные NLTK
 import re
@@ -174,6 +175,87 @@ def _split_by_words_fallback(text: str, max_words: int, overlap_words: int) -> L
     return chunks
 
 
+from sentence_transformers import SentenceTransformer, util
+import nltk
+import numpy as np
+nltk.download('punkt')
+
+model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+
+
+def semantic_chunk(
+        text,
+        max_words=600,
+        min_words=200,
+        overlap_words=120,
+        sim_threshold=0.75,
+        centroid_smoothing=0.2
+    ):
+
+    sentences = nltk.sent_tokenize(text)
+    embeddings = model.encode(sentences, normalize_embeddings=True).astype(np.float32)
+
+    chunks = []
+    current_chunk = []
+    current_embeds = []
+    current_len = 0
+
+    def get_centroid():
+        if not current_embeds:
+            return None
+        return np.mean(np.stack(current_embeds, axis=0), axis=0)
+
+    for sent, emb in zip(sentences, embeddings):
+
+        if current_chunk:
+            centroid = get_centroid()
+
+            # сглаживание центроида
+            centroid = centroid * (1 - centroid_smoothing) + emb * centroid_smoothing
+
+            sim = util.cos_sim(emb, centroid).item()
+
+            too_long = (current_len + len(sent.split()) > max_words)
+            topic_shift = (sim < sim_threshold and current_len >= min_words)
+
+            if too_long or topic_shift:
+
+                chunks.append(" ".join(current_chunk).strip())
+
+                # --- защитный overlap ---
+                if overlap_words > 0 and len(current_chunk) > 1:
+
+                    words_kept = 0
+                    overlap_chunk = []
+                    overlap_embeds = []
+
+                    for s, e in zip(reversed(current_chunk), reversed(current_embeds)):
+                        w = len(s.split())
+                        overlap_chunk.insert(0, s)
+                        overlap_embeds.insert(0, e)
+                        words_kept += w
+                        if words_kept >= overlap_words:
+                            break
+
+                    current_chunk = overlap_chunk
+                    current_embeds = overlap_embeds
+                    current_len = words_kept
+
+                else:
+                    current_chunk = []
+                    current_embeds = []
+                    current_len = 0
+
+        # добавляем текущее предложение
+        current_chunk.append(sent)
+        current_embeds.append(emb)
+        current_len += len(sent.split())
+
+    if current_chunk:
+        chunks.append(" ".join(current_chunk).strip())
+
+    return chunks
+
 
 
 def split_text_to_chunks(
@@ -254,3 +336,85 @@ def save_chunks_from_files(
             logger.error(f"❌ Ошибка при обработке {file_path.name}: {e}")
 
     logger.info(f"📂 Разбиение завершено. Проверьте папку: {output_path.resolve()}")
+
+
+import os
+import re
+import pandas as pd
+import pymorphy3
+
+
+morph = pymorphy3.MorphAnalyzer()
+
+
+def lemmatize_text(text: str) -> str:
+    """Лемматизация текста для русского языка"""
+    words = text.split()
+    lemmas = [morph.parse(word)[0].normal_form for word in words]
+    return " ".join(lemmas)
+
+
+def clean_text(text: str, preserve_paragraphs: bool = False, do_lemmatize: bool = True) -> str:
+    """Очистка текста + лемматизация"""
+    if not isinstance(text, str):
+        return ""
+
+    # Замены спецсимволов
+    text = text.replace("\xa0", " ")
+    text = text.replace("₽", "рублей")
+    text = text.replace("$", "долларов")
+    text = text.replace("→", "-")
+    text = text.replace('дм³', 'дм³ (кубических дециметров)')
+
+    # Убираем длинные последовательности точек, тире, подчёркиваний
+    text = re.sub(r"(\.{3,}|_{2,}|-{3,})", " ", text)
+
+    # Мусорные символы
+    text = re.sub(r"[«»\"“”‘’\[\]{}<>|•■◆►]", " ", text)
+
+    # Абзацы
+    if preserve_paragraphs:
+        text = re.sub(r"[ \t]+", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+    else:
+        text = re.sub(r"\s+", " ", text)
+
+    # Пробелы перед пунктуацией
+    text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+    text = re.sub(r" {2,}", " ", text)
+
+    # Нижний регистр
+    text = text.lower()
+
+    # Лемматизация
+    if do_lemmatize:
+        text = lemmatize_text(text)
+
+    return text.strip()
+
+
+def clean_csv(input_filename: str, preserve_paragraphs: bool = False, do_lemmatize: bool = True):
+    """Очистка CSV с текстами, лемматизация и сохранение"""
+    input_path = RAW_DIR / input_filename
+    output_path = PROCESSED_DIR / "clean_data.csv"
+
+    data = pd.read_csv(input_path)
+    data = data.dropna(subset=["text"])
+
+    data["text"] = data["text"].apply(lambda x: clean_text(x, preserve_paragraphs, do_lemmatize))
+    data["title"] = data.get("title", pd.Series([""] * len(data))).apply(
+        lambda x: clean_text(x, preserve_paragraphs, do_lemmatize)
+    )
+
+    # Убираем пустые строки и дубли
+    data = data[data["text"].str.strip() != ""].drop_duplicates(subset=["text"])
+
+    data.to_csv(output_path, index=False)
+
+    print(f"Cleaned data saved in: {output_path}")
+    print(f"Всего записей: {len(data)}")
+
+    return data
+
+if __name__ == "__main__":
+    clean_csv('websites_updated.csv', True)

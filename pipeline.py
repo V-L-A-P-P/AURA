@@ -29,7 +29,7 @@ def run_full_pipeline():
         # ЭТАП 1: Обработка документов
         logger.info("📂 ЭТАП 1: Загрузка и чанкинг документов...")
         df_docs = load_websites()
-        process_and_chunk(df_docs)
+        process_and_chunk(df_docs, max_words=600, overlap_words=100)
         logger.info("✅ ЭТАП 1 завершен")
 
         # ЭТАП 2: Создание эмбеддингов

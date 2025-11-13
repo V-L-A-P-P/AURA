@@ -8,14 +8,14 @@ from pathlib import Path
 import json
 import logging
 from utils.config import RAW_DIR, PROCESSED_DIR, CHUNKS_DIR
-from utils.chunk_utils import split_text_to_chunks, split_text_to_chunks_advanced
+from utils.chunk_utils import split_text_to_chunks, split_text_to_chunks_advanced, semantic_chunk
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def load_websites(csv_path: Path = None) -> pd.DataFrame:
     if csv_path is None:
-        csv_path = RAW_DIR / "websites_updated.csv"
+        csv_path = RAW_DIR / "clean_data.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"❌ Документы-файл не найден: {csv_path}")
     df = pd.read_csv(csv_path, dtype=str)
@@ -54,7 +54,7 @@ def process_and_chunk(
         title  = row["title"]
         url    = row["url"]
         text   = row["text"]
-        chunks = split_text_to_chunks_advanced(text, max_words=max_words, overlap_words=overlap_words, min_words=min_words)
+        chunks = split_text_to_chunks(text, max_words=max_words, overlap_words=overlap_words, min_words=min_words)
         if not chunks:
             logger.warning(f"⚠️ Документ {web_id} не дал ни одного чанка.")
             continue
@@ -81,4 +81,4 @@ def process_and_chunk(
 
 if __name__ == "__main__":
     df_docs = load_websites()
-    process_and_chunk(df_docs)
+    process_and_chunk(df_docs, max_words=1200, overlap_words=600)

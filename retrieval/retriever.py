@@ -1,6 +1,7 @@
 """
 retriever.py — модуль извлечения релевантных документов по вопросам,
 с расширенным выводом: возвращает web_id, chunk_id и текст чанка для каждого результата.
+Улучшено: проверка согласованности, оптимизация кандидатов, вычисление комбинированного скоринга с возможностью реранкинга.
 """
 
 import json
@@ -8,16 +9,20 @@ import numpy as np
 import faiss
 import pandas as pd
 import logging
-import pickle  # ← ДОБАВИТЬ
+import pickle
 from pathlib import Path
-from sentence_transformers import SentenceTransformer
+from sentence_transformers import SentenceTransformer, CrossEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer
+import torch
 
 from utils.config import (
     EMBEDDINGS_DIR,
     PROCESSED_DIR,
     EMBEDDING_MODEL,
-    HYBRID_ALPHA  # вес между векторным и текстовым поиском
+    HYBRID_ALPHA,
+    MAX_CANDIDATES,
+    RERANK_MODEL_NAME,
+    RERANK_ALPHA
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -47,69 +52,61 @@ class Retriever:
         with open(meta_path, "r", encoding="utf-8") as f:
             self.metadata = json.load(f)
 
-        # ← ДОБАВИТЬ ВАЛИДАЦИЮ СОГЛАСОВАННОСТИ
         self._validate_data_consistency()
 
         logger.info(f"🔍 Загружаем модель эмбеддингов: {model_name}")
         self.model = SentenceTransformer(model_name)
 
-        # ← ИСПРАВИТЬ TF-IDF С КЭШИРОВАНИЕМ
         self._load_or_create_tfidf()
 
+        # Инициализация рерангера
+        self.reranker = None
+        if RERANK_MODEL_NAME:
+            try:
+                logger.info(f"🔍 Загружаем CrossEncoder-рерангер: {RERANK_MODEL_NAME}")
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                self.reranker = CrossEncoder(RERANK_MODEL_NAME, device=device, max_length=512)
+            except Exception as e:
+                logger.error(f"❌ Ошибка загрузки рерангера: {e}")
+                self.reranker = None
+
     def _validate_data_consistency(self):
-        """Проверяет согласованность индекса и метаданных"""
         index_size = self.index.ntotal
         metadata_size = len(self.metadata)
-
         if index_size != metadata_size:
             logger.warning(
                 f"⚠️ Несоответствие размеров: индекс содержит {index_size} векторов, "
                 f"метаданные содержат {metadata_size} записей"
             )
-            # Автоматическое исправление - используем минимальный размер
             self.valid_size = min(index_size, metadata_size)
         else:
             self.valid_size = index_size
-
         logger.info(f"📊 Размер валидных данных: {self.valid_size}")
 
     def _load_or_create_tfidf(self):
-        """Загружает или создает TF-IDF матрицу с кэшированием"""
         tfidf_path = EMBEDDINGS_DIR / "tfidf_model.pkl"
-
         if tfidf_path.exists():
-            logger.info("🔍 Загружаем предварительно обученный TF-IDF...")
+            logger.info("🔍 Загружаем TF-IDF из кэша...")
             with open(tfidf_path, "rb") as f:
-                tfidf_data = pickle.load(f)
-                self.tfidf = tfidf_data["vectorizer"]
-                self.tfidf_matrix = tfidf_data["matrix"]
-            logger.info("✅ TF-IDF загружен из кэша")
+                data = pickle.load(f)
+                self.tfidf = data["vectorizer"]
+                self.tfidf_matrix = data["matrix"]
+            logger.info("✅ TF-IDF загружен")
         else:
             logger.info("🔧 Обучаем TF-IDF модель...")
             texts = [rec["text"] for rec in self.metadata[:self.valid_size]]
             self.tfidf = TfidfVectorizer(max_features=50000, lowercase=True, analyzer='word')
             self.tfidf_matrix = self.tfidf.fit_transform(texts)
-
-            # Сохраняем для будущего использования
-            tfidf_data = {
-                "vectorizer": self.tfidf,
-                "matrix": self.tfidf_matrix
-            }
             with open(tfidf_path, "wb") as f:
-                pickle.dump(tfidf_data, f)
+                pickle.dump({"vectorizer": self.tfidf, "matrix": self.tfidf_matrix}, f)
             logger.info(f"✅ TF-IDF обучен и сохранен: {tfidf_path}")
 
     def search(
         self,
         query: str,
         top_k: int = 5,
-        candidate_factor: int = 3
+        candidate_factor: int = 4
     ) -> list[dict]:
-        """
-        Кодирует query → нормализует → ищет кандидатов → гибридное ранжирование → выбирает top_k distinct web_id,
-        возвращая список словарей:
-          { "web_id":…, "chunk_id":…, "chunk_text":…, "score":… }
-        """
         if not query or not query.strip():
             logger.warning("Получен пустой запрос")
             return []
@@ -117,68 +114,71 @@ class Retriever:
         if top_k <= 0:
             raise ValueError("top_k должен быть положительным числом")
 
-        # ← ДОБАВИТЬ ПРОВЕРКУ ДОСТУПНЫХ ДАННЫХ
         if self.valid_size == 0:
             logger.error("Нет доступных данных для поиска")
             return []
 
         try:
-            # Векторный поиск
             q_vec = self.model.encode([query], convert_to_numpy=True).astype('float32')
             faiss.normalize_L2(q_vec)
 
-            num_candidates = min(top_k * candidate_factor, self.valid_size)
+            num_candidates = min(top_k * candidate_factor, MAX_CANDIDATES, self.valid_size)
             D_vec, I_vec = self.index.search(q_vec, num_candidates)
 
-            # TF-IDF поиск
             q_tfidf = self.tfidf.transform([query])
             scores_tfidf = (self.tfidf_matrix * q_tfidf.T).toarray().flatten()
-
-            # ← ИСПРАВИТЬ ДИАПАЗОН ИНДЕКСОВ
             top_tfidf_idx = np.argsort(-scores_tfidf)[:num_candidates]
 
-            candidates = set(I_vec[0].tolist() + top_tfidf_idx.tolist())
-            web_id_scores = {}
+            candidate_idxs = list(I_vec[0].tolist()) + list(top_tfidf_idx.tolist())
+            candidate_idxs = list(dict.fromkeys(candidate_idxs))  # удаляем дубликаты
 
-            for idx in candidates:
+            web_id_scores = {}
+            rerank_scores = {}
+
+            # Если рерангер доступен — вычисляем скор
+            if self.reranker:
+                # Создаём пары (query, text) для всех кандидатов
+                pairs = [(query, self.metadata[idx]["text"]) for idx in candidate_idxs]
+                try:
+                    scores = self.reranker.predict(pairs)
+                except Exception as e:
+                    logger.error(f"❌ Ошибка при предсказании рерангера: {e}")
+                    scores = [0.0] * len(pairs)
+                for idx, score in zip(candidate_idxs, scores):
+                    rerank_scores[idx] = float(score)
+
+            for idx in candidate_idxs:
                 if idx < 0 or idx >= self.valid_size:
                     continue
-
                 rec = self.metadata[idx]
-                web_id = rec.get("web_id")
+                web_id   = rec.get("web_id")
                 chunk_id = rec.get("chunk_id")
-                text = rec.get("text")
+                text     = rec.get("text")
 
                 if web_id is None:
                     continue
 
-                # Векторная оценка
-                if idx in I_vec[0]:
-                    pos = list(I_vec[0]).index(idx)
-                    vec_score = D_vec[0][pos]
-                else:
-                    vec_score = 0.0
+                vec_score   = D_vec[0][list(I_vec[0]).index(idx)] if idx in I_vec[0] else 0.0
+                tfidf_score = scores_tfidf[idx]
+                rerank_score = rerank_scores.get(idx, 0.0)
 
-                text_score = scores_tfidf[idx]
+                combined = HYBRID_ALPHA * vec_score + (1.0 - HYBRID_ALPHA) * tfidf_score
+                if self.reranker:
+                    combined = (1.0 - RERANK_ALPHA) * combined + RERANK_ALPHA * rerank_score
 
-                combined = HYBRID_ALPHA * vec_score + (1.0 - HYBRID_ALPHA) * text_score
-
-                # ИСПРАВЛЕНИЕ: Сохраняем данные из ТОГО ЖЕ чанка, который дал максимальный score
                 if web_id not in web_id_scores or combined > web_id_scores[web_id]["score"]:
                     web_id_scores[web_id] = {
-                        "chunk_id": chunk_id,  # ← chunk_id из ЭТОГО чанка
-                        "chunk_text": text,  # ← текст из ЭТОГО чанка
-                        "score": combined  # ← score ЭТОГО чанка
+                        "chunk_id":   chunk_id,
+                        "chunk_text": text,
+                        "score":       combined
                     }
 
-            sorted_web_ids = sorted(
-                web_id_scores.items(),
-                key=lambda x: x[1]["score"],
-                reverse=True
-            )
+            sorted_items = sorted(web_id_scores.items(),
+                                  key=lambda x: x[1]["score"],
+                                  reverse=True)
 
             results = []
-            for web_id, info in sorted_web_ids[:top_k]:
+            for web_id, info in sorted_items[:top_k]:
                 results.append({
                     "web_id":     web_id,
                     "chunk_id":   info["chunk_id"],
@@ -194,12 +194,11 @@ class Retriever:
             return []
 
     def get_stats(self) -> dict:
-        """Возвращает статистику retriever"""
         return {
-            "index_size": self.index.ntotal,
-            "metadata_size": len(self.metadata),
-            "valid_size": self.valid_size,
-            "embedding_dim": self.index.d,
+            "index_size":     self.index.ntotal,
+            "metadata_size":  len(self.metadata),
+            "valid_size":     self.valid_size,
+            "embedding_dim":   self.index.d,
             "vocabulary_size": len(self.tfidf.vocabulary_) if hasattr(self.tfidf, 'vocabulary_') else 0
         }
 
@@ -223,12 +222,11 @@ def run_batch_questions(
 
     retriever = Retriever()
 
-    # ← ДОБАВИТЬ ВЫВОД СТАТИСТИКИ
     stats = retriever.get_stats()
     logger.info(f"📊 Статистика Retriever: {stats}")
 
     all_results = []
-    processed = 0
+    processed   = 0
 
     for _, row in df_q.iterrows():
         q_id  = row["q_id"]
@@ -240,36 +238,34 @@ def run_batch_questions(
 
             for rank, hit in enumerate(hits, start=1):
                 all_results.append({
-                    "q_id":     q_id,
-                    "rank":     rank,
-                    "web_id":   hit["web_id"],
-                    "chunk_id": hit["chunk_id"],
-                    "chunk_text": hit["chunk_text"][:200],  # первые 200 символов
-                    "score":    hit["score"]
+                    "q_id":      q_id,
+                    "rank":      rank,
+                    "web_id":    hit["web_id"],
+                    "chunk_id":  hit["chunk_id"],
+                    "chunk_text": hit["chunk_text"][:200],
+                    "score":     hit["score"]
                 })
 
-            # если результатов меньше top_k, дополняем пустыми строками
-            for rank in range(len(hits) + 1, top_k + 1):
+            for rank in range(len(hits)+1, top_k+1):
                 all_results.append({
                     "q_id":      q_id,
                     "rank":      rank,
                     "web_id":    "",
-                    "chunk_id":  "",
+                    "chunk_id": "",
                     "chunk_text": "",
-                    "score":     ""
+                    "score":    ""
                 })
 
         except Exception as e:
             logger.error(f"❌ Ошибка при обработке вопроса {q_id}: {e}")
-            # Добавляем пустые строки для этого вопроса
-            for rank in range(1, top_k + 1):
+            for rank in range(1, top_k+1):
                 all_results.append({
                     "q_id":      q_id,
                     "rank":      rank,
                     "web_id":    "",
-                    "chunk_id":  "",
+                    "chunk_id": "",
                     "chunk_text": "",
-                    "score":     ""
+                    "score":    ""
                 })
 
     df_res = pd.DataFrame(all_results)

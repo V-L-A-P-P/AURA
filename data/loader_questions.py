@@ -14,7 +14,7 @@ def load_questions(csv_path: Path = None) -> pd.DataFrame:
     Ожидается наличие столбцов: q_id, query
     """
     if csv_path is None:
-        csv_path = RAW_DIR / "questions_clean_sample_200.csv"
+        csv_path = RAW_DIR / "questions_clean.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"❌ Файл с вопросами не найден: {csv_path}")
     df = pd.read_csv(csv_path, dtype=str)
