@@ -8,14 +8,14 @@ from pathlib import Path
 import json
 import logging
 from utils.config import RAW_DIR, PROCESSED_DIR, CHUNKS_DIR
-from utils.chunk_utils import split_text_to_chunks, split_text_to_chunks_advanced, semantic_chunk
+from utils.chunk_utils import split_text_to_chunks, split_text_to_chunks_advanced, semantic_chunk, recursive_chunking
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def load_websites(csv_path: Path = None) -> pd.DataFrame:
     if csv_path is None:
-        csv_path = RAW_DIR / "clean_data.csv"
+        csv_path = RAW_DIR / "websites_updated.csv"
     if not csv_path.exists():
         raise FileNotFoundError(f"❌ Документы-файл не найден: {csv_path}")
     df = pd.read_csv(csv_path, dtype=str)
@@ -35,8 +35,8 @@ def process_and_chunk(
     df: pd.DataFrame,
     chunks_dir: Path = None,
     meta_output_path: Path = None,
-    max_words: int = 200,
-    overlap_words: int = 50,
+    max_words: int = 600,
+    overlap_words: int = 100,
     min_words: int = 30
 ):
     if chunks_dir is None:
@@ -81,4 +81,4 @@ def process_and_chunk(
 
 if __name__ == "__main__":
     df_docs = load_websites()
-    process_and_chunk(df_docs, max_words=1200, overlap_words=600)
+    process_and_chunk(df_docs, max_words=600, overlap_words=100)

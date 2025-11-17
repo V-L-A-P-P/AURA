@@ -222,10 +222,10 @@ class QueryPreprocessor:
 # ===== Утилита для быстрой инициализации ===== #
 def create_default_preprocessor() -> QueryPreprocessor:
     return QueryPreprocessor(
-        use_llm=True,
+        #use_llm=True,
         #llm_model="unsloth/Llama-3.2-3B-Instruct",
         #llm_model="Qwen/Qwen2.5-7B-Instruct",
-        llm_model="Qwen/Qwen2.5-1.5B-Instruct",
+        #llm_model="Qwen/Qwen2.5-1.5B-Instruct",
 
         enable_lemmatization=True
     )

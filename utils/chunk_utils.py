@@ -49,6 +49,8 @@ def split_text_to_chunks_advanced(
     if not text:
         return []
 
+
+
     # ⚡ Быстрая разбивка на предложения
     sentence_endings = r'(?<=[.!?…])\s+(?=[А-ЯA-Z"(\[])'
     sentences = re.split(sentence_endings, text)
@@ -186,7 +188,7 @@ model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
 def semantic_chunk(
         text,
         max_words=600,
-        min_words=200,
+        min_words=30,
         overlap_words=120,
         sim_threshold=0.75,
         centroid_smoothing=0.2
@@ -337,6 +339,41 @@ def save_chunks_from_files(
 
     logger.info(f"📂 Разбиение завершено. Проверьте папку: {output_path.resolve()}")
 
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+def recursive_chunking(
+    text: str,
+    chunk_size: int,
+    overlap: int,
+    separators: list[str] = None
+) -> list[str]:
+    """
+    Разбивает один текст на чанки:
+    - text         : исходный текст (строка)
+    - chunk_size   : максимальное число символов (или слов, зависит от настройки) в чанке
+    - overlap      : число символов (или слов) перекрытия между чанками
+    - separators   : список разделителей для рекурсивного сплита
+
+    Возвращает список строк-чанков.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return []
+
+    if separators is None:
+        separators = ["\n\n", "\n", ".", "?", "!", ";", " ", ""]
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size    = chunk_size,
+        chunk_overlap = overlap,
+        separators    = separators,
+        length_function=len
+    )
+
+    raw_chunks = splitter.split_text(text)
+    # Очищаем пустые и лишние пробелы
+    chunks = [chunk.strip() for chunk in raw_chunks if chunk and chunk.strip()]
+    return chunks
+
 
 import os
 import re
@@ -356,6 +393,7 @@ def lemmatize_text(text: str) -> str:
 
 def clean_text(text: str, preserve_paragraphs: bool = False, do_lemmatize: bool = True) -> str:
     """Очистка текста + лемматизация"""
+    '''
     if not isinstance(text, str):
         return ""
 
@@ -385,7 +423,7 @@ def clean_text(text: str, preserve_paragraphs: bool = False, do_lemmatize: bool 
 
     # Нижний регистр
     text = text.lower()
-
+    '''
     # Лемматизация
     if do_lemmatize:
         text = lemmatize_text(text)
@@ -396,7 +434,7 @@ def clean_text(text: str, preserve_paragraphs: bool = False, do_lemmatize: bool 
 def clean_csv(input_filename: str, preserve_paragraphs: bool = False, do_lemmatize: bool = True):
     """Очистка CSV с текстами, лемматизация и сохранение"""
     input_path = RAW_DIR / input_filename
-    output_path = PROCESSED_DIR / "clean_data.csv"
+    output_path = PROCESSED_DIR / "clean_data_2.csv"
 
     data = pd.read_csv(input_path)
     data = data.dropna(subset=["text"])

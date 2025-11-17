@@ -26,7 +26,7 @@ CHUNK_OVERLAP  = int(os.getenv("CHUNK_OVERLAP",  100))
 
 # === Настройки моделей ===
 EMBEDDING_MODEL   = os.getenv("EMBEDDING_MODEL",   "ai-forever/sbert_large_nlu_ru")#"cointegrated/rubert-tiny2")
-GENERATION_MODEL  = os.getenv("GENERATION_MODEL",  "unsloth/Llama-3.2-3B-Instruct")
+GENERATION_MODEL  = os.getenv("GENERATION_MODEL",  "BAAI/bge-m3")
 
 # === Настройки FAISS / индексов ===
 # Можно указать базовые пути, но чаще используются отдельные файлы per-mode
@@ -35,10 +35,13 @@ QA_COMBINED_INDEX    = EMBEDDINGS_DIR / "qa_combined_index.faiss"
 KB_INDEX_PATH        = EMBEDDINGS_DIR / "kb_index.faiss"
 QA_METADATA_PATH     = EMBEDDINGS_DIR / "qa_metadata.json"
 KB_METADATA_PATH     = EMBEDDINGS_DIR / "kb_metadata.json"
-HYBRID_ALPHA     = 0#float(os.getenv("HYBRID_ALPHA",  0.9))
+HYBRID_ALPHA     = 0.3#float(os.getenv("HYBRID_ALPHA",  0.9))
 MAX_CANDIDATES = int(os.getenv("MAX_CANDIDATES", 100))
 RERANK_MODEL_NAME = os.getenv("RERANK_MODEL_NAME", "DiTy/cross-encoder-russian-msmarco")
-RERANK_ALPHA = float(os.getenv("RERANK_ALPHA", 0.7))
+RERANK_ALPHA = float(os.getenv("RERANK_ALPHA", 0.4))
+RERANK_MODEL_NAME_2 = "AAI/bge-reranker-v2-m3"  # например
+TOP_N_FOR_SECOND_RERANK = 10
+RERANK2_ALPHA = 0.3
 
 # === Логирование и отладка ===
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")

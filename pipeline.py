@@ -26,6 +26,7 @@ def run_full_pipeline():
     logger.info("=" * 50)
 
     try:
+
         # ЭТАП 1: Обработка документов
         logger.info("📂 ЭТАП 1: Загрузка и чанкинг документов...")
         df_docs = load_websites()
