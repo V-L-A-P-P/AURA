@@ -1,129 +1,118 @@
 """
-validate_pipeline.py — проверка согласованности данных между этапами pipeline
+validate_pipeline.py — consistency checks for RAG pipeline artifacts
 """
 
 import json
-import numpy as np
-import faiss
-import pandas as pd
 import logging
-from pathlib import Path
-from utils.config import EMBEDDINGS_DIR, PROCESSED_DIR, RAW_DIR
+
+import faiss
+
+from utils.config import EMBEDDINGS_DIR, PROCESSED_DIR
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def validate_chunk_consistency():
-    """Проверяет согласованность чанков между этапами"""
-    logger.info("🔍 Проверка согласованности чанков...")
+# ---------------------------------------------------------------------
 
-    # 1. Проверяем исходные данные
-    websites_path = RAW_DIR / "websites_updated.csv"
-    if not websites_path.exists():
-        logger.error(f"❌ Исходный файл не найден: {websites_path}")
-        return False
+def validate_chunks_and_embeddings() -> bool:
+    """Validate consistency between chunks, metadata and FAISS index"""
 
-    df_websites = pd.read_csv(websites_path, dtype=str)
-    logger.info(f"📊 Исходные сайты: {len(df_websites)} записей")
+    logger.info("Validating chunks and embeddings...")
 
-    # 2. Проверяем чанки
     chunks_path = PROCESSED_DIR / "web_chunks.json"
-    if not chunks_path.exists():
-        logger.error(f"❌ Файл чанков не найден: {chunks_path}")
-        return False
+    meta_path = EMBEDDINGS_DIR / "kb_metadata.json"
+    index_path = EMBEDDINGS_DIR / "kb_index.faiss"
+
+    for p in [chunks_path, meta_path, index_path]:
+        if not p.exists():
+            logger.error(f"Missing required file: {p}")
+            return False
 
     with open(chunks_path, "r", encoding="utf-8") as f:
-        chunks_data = json.load(f)
-
-    logger.info(f"📊 Чанки: {len(chunks_data)} записей")
-
-    # 3. Проверяем метаданные эмбеддингов
-    meta_path = EMBEDDINGS_DIR / "kb_metadata.json"
-    if not meta_path.exists():
-        logger.error(f"❌ Метаданные эмбеддингов не найдены: {meta_path}")
-        return False
+        chunks = json.load(f)
 
     with open(meta_path, "r", encoding="utf-8") as f:
-        embedding_meta = json.load(f)
-
-    logger.info(f"📊 Метаданные эмбеддингов: {len(embedding_meta)} записей")
-
-    # 4. Проверяем FAISS индекс
-    index_path = EMBEDDINGS_DIR / "kb_index.faiss"
-    if not index_path.exists():
-        logger.error(f"❌ FAISS индекс не найден: {index_path}")
-        return False
+        meta = json.load(f)
 
     index = faiss.read_index(str(index_path))
-    logger.info(f"📊 FAISS индекс: {index.ntotal} векторов")
 
-    # 5. Проверяем согласованность размеров
-    issues = []
+    issues: list[str] = []
 
-    if len(chunks_data) != len(embedding_meta):
-        issues.append(f"Размер чанков ({len(chunks_data)}) != размер метаданных ({len(embedding_meta)})")
+    if len(chunks) != len(meta):
+        issues.append(
+            f"Chunks ({len(chunks)}) != metadata ({len(meta)})"
+        )
 
-    if index.ntotal != len(embedding_meta):
-        issues.append(f"Размер индекса ({index.ntotal}) != размер метаданных ({len(embedding_meta)})")
+    if index.ntotal != len(meta):
+        issues.append(
+            f"FAISS index ({index.ntotal}) != metadata ({len(meta)})"
+        )
 
-    # 6. Проверяем уникальность chunk_id
-    chunk_ids = [chunk["chunk_id"] for chunk in chunks_data]
-    embedding_chunk_ids = [meta["chunk_id"] for meta in embedding_meta]
+    chunk_ids = [c["chunk_id"] for c in chunks]
+    meta_ids = [m["chunk_id"] for m in meta]
 
     if len(chunk_ids) != len(set(chunk_ids)):
-        issues.append("Найдены дублирующиеся chunk_id в чанках")
+        issues.append("Duplicate chunk_id in web_chunks.json")
 
-    if len(embedding_chunk_ids) != len(set(embedding_chunk_ids)):
-        issues.append("Найдены дублирующиеся chunk_id в метаданных эмбеддингов")
+    if len(meta_ids) != len(set(meta_ids)):
+        issues.append("Duplicate chunk_id in kb_metadata.json")
 
-    # 7. Вывод результатов
+    if set(chunk_ids) != set(meta_ids):
+        issues.append("chunk_id mismatch between chunks and metadata")
+
     if issues:
-        logger.error("❌ Найдены проблемы согласованности:")
-        for issue in issues:
-            logger.error(f"   - {issue}")
+        logger.error("Chunk/embedding consistency errors:")
+        for i in issues:
+            logger.error(f"  - {i}")
         return False
-    else:
-        logger.info("✅ Все проверки согласованности пройдены")
-        return True
+
+    logger.info("Chunks and embeddings are consistent")
+    return True
 
 
-def validate_questions():
-    """Проверяет корректность вопросов"""
-    logger.info("🔍 Проверка вопросов...")
+# ---------------------------------------------------------------------
+
+def validate_questions() -> bool:
+    """Validate processed questions file"""
+
+    logger.info("Validating questions...")
 
     questions_path = PROCESSED_DIR / "questions.json"
     if not questions_path.exists():
-        logger.error(f"❌ Файл вопросов не найден: {questions_path}")
+        logger.error(f"Missing questions file: {questions_path}")
         return False
 
     try:
         with open(questions_path, "r", encoding="utf-8") as f:
             questions = json.load(f)
 
-        logger.info(f"📊 Вопросы: {len(questions)} записей")
+        if not questions:
+            logger.error("Questions file is empty")
+            return False
 
-        # Проверяем наличие обязательных полей
         for i, q in enumerate(questions):
             if "q_id" not in q or "query" not in q:
-                logger.error(f"❌ Вопрос {i} не содержит обязательных полей")
+                logger.error(f"Invalid question at index {i}")
                 return False
 
-        logger.info("✅ Вопросы корректны")
+        logger.info(f"Questions OK ({len(questions)} items)")
         return True
 
     except Exception as e:
-        logger.error(f"❌ Ошибка при проверке вопросов: {e}")
+        logger.error(f"Failed to read questions: {e}")
         return False
 
 
+# ---------------------------------------------------------------------
+
 if __name__ == "__main__":
-    logger.info("🚀 Запуск проверки pipeline...")
+    logger.info("Running pipeline validation")
 
-    chunks_ok = validate_chunk_consistency()
-    questions_ok = validate_questions()
+    ok_chunks = validate_chunks_and_embeddings()
+    ok_questions = validate_questions()
 
-    if chunks_ok and questions_ok:
-        logger.info("🎉 Все проверки пройдены! Pipeline готов к работе.")
+    if ok_chunks and ok_questions:
+        logger.info("Pipeline validation PASSED")
     else:
-        logger.error("💥 Обнаружены проблемы в pipeline. Необходимо исправить перед запуском.")
+        logger.error("Pipeline validation FAILED")
