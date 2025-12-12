@@ -1,72 +1,70 @@
 """
-run_pipeline.py — основной скрипт запуска всего pipeline RAG системы.
-Выполняет все этапы последовательно.
+run_pipeline.py — main entry point for the RAG pipeline.
+Runs all pipeline stages sequentially.
 """
 
 import logging
-from pathlib import Path
-import sys
 
-# Добавляем корневую директорию в путь для импортов
-sys.path.append(str(Path(__file__).parent))
-
+from utils.config import BASE_DIR
+from graph.build_graph import build_and_save_graph
 from data.loader_websites import load_websites, process_and_chunk
 from data.loader_questions import load_questions, save_processed_questions
 from embeddings.websites_embed import build_kb_embeddings
 from retrieval.retriever import run_batch_questions
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
 logger = logging.getLogger(__name__)
 
+GRAPH_PATH = BASE_DIR / "graph" / "graph_index.pkl"
 
-def run_full_pipeline():
-    """Запускает полный pipeline RAG системы"""
 
-    logger.info("🚀 ЗАПУСК ПОЛНОГО PIPELINE RAG СИСТЕМЫ")
-    logger.info("=" * 50)
+def run_full_pipeline() -> None:
+    """Run the full RAG pipeline from raw data to retrieval results."""
+
+    logger.info("Starting full RAG pipeline")
 
     try:
-
-        # ЭТАП 1: Обработка документов
-        logger.info("📂 ЭТАП 1: Загрузка и чанкинг документов...")
+        # Stage 1: Load and chunk documents
+        logger.info("Stage 1: Loading and chunking documents")
         df_docs = load_websites()
         process_and_chunk(df_docs, max_words=600, overlap_words=100)
-        logger.info("✅ ЭТАП 1 завершен")
 
-        # ЭТАП 2: Создание эмбеддингов
-        logger.info("🧠 ЭТАП 2: Создание эмбеддингов...")
+        # Stage 2: Build embeddings and FAISS index
+        logger.info("Stage 2: Building embeddings")
         build_kb_embeddings(batch_size=32)
-        logger.info("✅ ЭТАП 2 завершен")
 
-        # ЭТАП 3: Подготовка вопросов
-        logger.info("❓ ЭТАП 3: Подготовка вопросов...")
+        # Stage 3: Prepare questions
+        logger.info("Stage 3: Preparing questions")
         df_questions = load_questions()
         save_processed_questions(df_questions)
-        logger.info("✅ ЭТАП 3 завершен")
 
-        # ЭТАП 4: Поиск релевантных документов
-        logger.info("🔍 ЭТАП 4: Поиск релевантных документов...")
+        # Stage 4: Build and save chunk graph
+        logger.info("Stage 4: Building chunk graph")
+        build_and_save_graph(GRAPH_PATH)
+
+        # Stage 5: Retrieval
+        logger.info("Stage 5: Running retrieval")
         run_batch_questions(top_k=5)
-        logger.info("✅ ЭТАП 4 завершен")
 
-        logger.info("=" * 50)
-        logger.info("🎉 ВСЕ ЭТАПЫ PIPELINE УСПЕШНО ЗАВЕРШЕНЫ!")
+        logger.info("Pipeline finished successfully")
 
     except Exception as e:
-        logger.error(f"❌ Ошибка в pipeline: {e}")
+        logger.exception(f"Pipeline failed: {e}")
         raise
 
 
-def run_retrieval_only():
-    """Запускает только этап поиска (если данные уже подготовлены)"""
-    logger.info("🔍 ЗАПУСК ТОЛЬКО ПОИСКА...")
+def run_retrieval_only() -> None:
+    """Run retrieval only (assumes all data is already prepared)."""
+    logger.info("Running retrieval only")
     run_batch_questions(top_k=5)
-    logger.info("✅ Поиск завершен")
+    logger.info("Retrieval finished")
 
 
 if __name__ == "__main__":
-    # Запуск полного pipeline
     run_full_pipeline()
-
-    # Или только поиск, если данные уже готовы:
+    # Alternatively:
     # run_retrieval_only()
