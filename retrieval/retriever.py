@@ -5,9 +5,15 @@ import pandas as pd
 import logging
 import pickle
 from pathlib import Path
+from tqdm import tqdm
+
+
+import torch
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer
-import torch
+
+from graph.graph_store import load_graph
+from graph.graph_expander import expand_chunks
 
 from utils.config import (
     EMBEDDINGS_DIR,
@@ -17,8 +23,6 @@ from utils.config import (
     MAX_CANDIDATES,
     RERANK_MODEL_NAME,
     RERANK_ALPHA,
-
-    # === NEW === параметры второго реранкера
     RERANK_MODEL_NAME_2,
     TOP_N_FOR_SECOND_RERANK,
     RERANK2_ALPHA,
@@ -31,298 +35,324 @@ logger = logging.getLogger(__name__)
 class Retriever:
     def __init__(
         self,
-        index_path: Path = None,
-        meta_path: Path = None,
-        model_name: str = EMBEDDING_MODEL
+        index_path: Path | None = None,
+        meta_path: Path | None = None,
+        model_name: str = EMBEDDING_MODEL,
     ):
-        if index_path is None:
-            index_path = EMBEDDINGS_DIR / "kb_index.faiss"
-        if meta_path is None:
-            meta_path = EMBEDDINGS_DIR / "kb_metadata.json"
+        # --- graph ---
+        try:
+            self.graph = load_graph()
+            logger.info("Graph loaded")
+        except Exception as e:
+            logger.warning(f"Graph unavailable: {e}")
+            self.graph = None
+
+        index_path = index_path or (EMBEDDINGS_DIR / "kb_index.faiss")
+        meta_path = meta_path or (EMBEDDINGS_DIR / "kb_metadata.json")
 
         if not index_path.exists():
-            raise FileNotFoundError(f"❌ Индекс не найден: {index_path}")
+            raise FileNotFoundError(f"Index not found: {index_path}")
         if not meta_path.exists():
-            raise FileNotFoundError(f"❌ Метаданные не найдены: {meta_path}")
+            raise FileNotFoundError(f"Metadata not found: {meta_path}")
 
-        logger.info(f"🔍 Загружаем FAISS-индекс: {index_path}")
         self.index = faiss.read_index(str(index_path))
 
-        logger.info(f"🔍 Загружаем метаданные: {meta_path}")
         with open(meta_path, "r", encoding="utf-8") as f:
             self.metadata = json.load(f)
 
         self._validate_data_consistency()
 
-        logger.info(f"🔍 Загружаем модель эмбеддингов: {model_name}")
         self.model = SentenceTransformer(model_name)
 
         self._load_or_create_tfidf()
 
-        # === первый реранкер ===
+        # --- reranker 1 ---
         self.reranker = None
         if RERANK_MODEL_NAME:
             try:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"🔍 Загружаем CrossEncoder-реранкер: {RERANK_MODEL_NAME}")
-                self.reranker = CrossEncoder(RERANK_MODEL_NAME, device=device, max_length=512)
+                self.reranker = CrossEncoder(
+                    RERANK_MODEL_NAME,
+                    device=device,
+                    max_length=512,
+                )
             except Exception as e:
-                logger.error(f"❌ Ошибка загрузки реранкера: {e}")
-                self.reranker = None
+                logger.warning(f"Reranker-1 disabled: {e}")
 
-        # === второй реранкер (новый) ===
+        # --- reranker 2 ---
         self.reranker2 = None
         if RERANK_MODEL_NAME_2:
             try:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                logger.info(f"🔍 Загружаем второй CrossEncoder-реранкер: {RERANK_MODEL_NAME_2}")
-                self.reranker2 = CrossEncoder(RERANK_MODEL_NAME_2, device=device, max_length=512)
+                self.reranker2 = CrossEncoder(
+                    RERANK_MODEL_NAME_2,
+                    device=device,
+                    max_length=512,
+                )
             except Exception as e:
-                logger.error(f"❌ Ошибка загрузки второго реранкера: {e}")
-                self.reranker2 = None
+                logger.warning(f"Reranker-2 disabled: {e}")
+
+    # ------------------------------------------------------------------
 
     def _validate_data_consistency(self):
         index_size = self.index.ntotal
-        metadata_size = len(self.metadata)
-        if index_size != metadata_size:
+        meta_size = len(self.metadata)
+        self.valid_size = min(index_size, meta_size)
+
+        if index_size != meta_size:
             logger.warning(
-                f"⚠️ Несоответствие размеров: индекс содержит {index_size} векторов, "
-                f"метаданные — {metadata_size} записей"
+                f"Index/metadata mismatch: {index_size} vs {meta_size}"
             )
-            self.valid_size = min(index_size, metadata_size)
-        else:
-            self.valid_size = index_size
-        logger.info(f"📊 Размер валидных данных: {self.valid_size}")
+
+    # ------------------------------------------------------------------
 
     def _load_or_create_tfidf(self):
         tfidf_path = EMBEDDINGS_DIR / "tfidf_model.pkl"
+
         if tfidf_path.exists():
-            logger.info("🔍 Загружаем TF-IDF из кэша...")
             with open(tfidf_path, "rb") as f:
                 data = pickle.load(f)
-                self.tfidf = data["vectorizer"]
-                self.tfidf_matrix = data["matrix"]
-            logger.info("✅ TF-IDF загружен")
-        else:
-            logger.info("🔧 Обучаем TF-IDF модель...")
-            texts = [rec["text"] for rec in self.metadata[:self.valid_size]]
-            self.tfidf = TfidfVectorizer(max_features=50000, lowercase=True, analyzer='word')
-            self.tfidf_matrix = self.tfidf.fit_transform(texts)
-            with open(tfidf_path, "wb") as f:
-                pickle.dump({"vectorizer": self.tfidf, "matrix": self.tfidf_matrix}, f)
-            logger.info(f"✅ TF-IDF обучен и сохранён: {tfidf_path}")
 
-    def search(self, query: str, top_k: int = 5, candidate_factor: int = 3) -> list[dict]:
-        if not query or not query.strip():
-            logger.warning("Получен пустой запрос")
-            return []
+            self.tfidf = data["vectorizer"]
+            self.tfidf_matrix = data["matrix"]
 
-        if top_k <= 0:
-            raise ValueError("top_k должен быть положительным числом")
+            if self.tfidf_matrix.shape[0] != self.valid_size:
+                logger.warning("TF-IDF cache mismatch, rebuilding")
+                tfidf_path.unlink()
+                self._load_or_create_tfidf()
+                return
 
-        if self.valid_size == 0:
-            logger.error("Нет доступных данных для поиска")
-            return []
+            logger.info("TF-IDF loaded from cache")
+            return
 
-        try:
-            # === эмбеддинг ===
-            q_vec = self.model.encode([query], convert_to_numpy=True).astype('float32')
-            faiss.normalize_L2(q_vec)
+        texts = [rec["text"] for rec in self.metadata[:self.valid_size]]
 
-            num_candidates = min(top_k * candidate_factor, MAX_CANDIDATES, self.valid_size)
-            D_vec, I_vec = self.index.search(q_vec, num_candidates)
+        self.tfidf = TfidfVectorizer(
+            max_features=50_000,
+            lowercase=True,
+        )
+        self.tfidf_matrix = self.tfidf.fit_transform(texts)
 
-            # === TF-IDF ===
-            q_tfidf = self.tfidf.transform([query])
-            scores_tfidf = (self.tfidf_matrix * q_tfidf.T).toarray().flatten()
-            top_tfidf_idx = np.argsort(-scores_tfidf)[:num_candidates]
-
-            # объединение FAISS + TF-IDF
-            candidate_idxs = list(dict.fromkeys(I_vec[0].tolist() + top_tfidf_idx.tolist()))
-
-            faiss_scores = D_vec[0]
-            pos_map = {val: pos for pos, val in enumerate(I_vec[0])}
-
-            faiss_subset = np.array([
-                faiss_scores[pos_map[i]] if i in pos_map else 0.0
-                for i in candidate_idxs
-            ], float)
-            tfidf_subset = np.array([scores_tfidf[i] for i in candidate_idxs], float)
-
-            def _minmax(arr):
-                mn, mx = arr.min(), arr.max()
-                return (arr - mn) / (mx - mn) if mx != mn else np.zeros_like(arr)
-
-            faiss_norm = _minmax(faiss_subset)
-            tfidf_norm = _minmax(tfidf_subset)
-
-            # === Реранк #1 ===
-            if self.reranker:
-                pairs = [(query, self.metadata[idx]["text"]) for idx in candidate_idxs]
-                try:
-                    s = self.reranker.predict(pairs)
-                except Exception as e:
-                    logger.error(f"❌ Ошибка первого реранкера: {e}")
-                    s = [0.0] * len(pairs)
-
-                rerank1_arr = np.array(s, float)
-                rerank1_norm = _minmax(rerank1_arr)
-            else:
-                rerank1_norm = np.zeros(len(candidate_idxs), float)
-
-            # === Реранк #2 (тяжёлый) ===
-            if self.reranker2:
-                top_n = np.argsort(-rerank1_norm)[:TOP_N_FOR_SECOND_RERANK]
-                top_ids = [candidate_idxs[i] for i in top_n]
-
-                pairs2 = [(query, self.metadata[idx]["text"]) for idx in top_ids]
-                try:
-                    s2 = self.reranker2.predict(pairs2)
-                except Exception as e:
-                    logger.error(f"❌ Ошибка второго реранкера: {e}")
-                    s2 = [0.0] * len(top_ids)
-
-                # Заполняем массив оценок второго реранка
-                rerank2_full = np.zeros(len(candidate_idxs), float)
-                for local_pos, global_id in zip(top_n, top_ids):
-                    rerank2_full[local_pos] = float(s2[top_n.tolist().index(local_pos)])
-
-                rerank2_norm = _minmax(rerank2_full)
-            else:
-                rerank2_norm = np.zeros(len(candidate_idxs), float)
-
-            # === финальное объединение ===
-            web_id_scores = {}
-
-            for pos, idx in enumerate(candidate_idxs):
-                if idx < 0 or idx >= self.valid_size:
-                    continue
-
-                rec = self.metadata[idx]
-                web_id = rec.get("web_id")
-                if web_id is None:
-                    continue
-
-                vec_s = faiss_norm[pos]
-                tfidf_s = tfidf_norm[pos]
-                r1 = rerank1_norm[pos]
-                r2 = rerank2_norm[pos]
-
-                combined = (
-                    HYBRID_ALPHA * vec_s +
-                    (1 - HYBRID_ALPHA) * tfidf_s
-                )
-
-                combined = (1 - RERANK_ALPHA) * combined + RERANK_ALPHA * r1
-                combined = (1 - RERANK2_ALPHA) * combined + RERANK2_ALPHA * r2
-
-                if web_id not in web_id_scores or combined > web_id_scores[web_id]["score"]:
-                    web_id_scores[web_id] = {
-                        "chunk_id": rec.get("chunk_id"),
-                        "text": rec.get("text"),
-                        "score": combined
-                    }
-
-            sorted_items = sorted(web_id_scores.items(), key=lambda x: x[1]["score"], reverse=True)
-
-            return [
+        with open(tfidf_path, "wb") as f:
+            pickle.dump(
                 {
-                    "web_id": web_id,
-                    "chunk_id": info["chunk_id"],
-                    "text": info["text"],
-                    "score": info["score"]
-                }
-                for web_id, info in sorted_items[:top_k]
+                    "vectorizer": self.tfidf,
+                    "matrix": self.tfidf_matrix,
+                },
+                f,
+            )
+
+        logger.info("TF-IDF trained")
+
+    # ------------------------------------------------------------------
+
+    def search(self, query: str, top_k: int = 5, candidate_factor: int = 3):
+        if not query or not query.strip():
+            return []
+
+        # --- dense search ---
+        q_vec = self.model.encode([query], convert_to_numpy=True).astype("float32")
+        faiss.normalize_L2(q_vec)
+
+        n_candidates = min(
+            top_k * candidate_factor,
+            MAX_CANDIDATES,
+            self.valid_size,
+        )
+
+        D, I = self.index.search(q_vec, n_candidates)
+
+        # --- sparse search ---
+        q_tfidf = self.tfidf.transform([query])
+        tfidf_scores = (self.tfidf_matrix @ q_tfidf.T).toarray().ravel()
+        top_sparse = np.argsort(-tfidf_scores)[:n_candidates]
+
+        candidate_idxs = list(
+            dict.fromkeys(I[0].tolist() + top_sparse.tolist())
+        )
+
+        # --- graph expansion ---
+        if self.graph:
+            seed_chunks = [
+                self.metadata[i]["chunk_id"]
+                for i in candidate_idxs
+                if 0 <= i < self.valid_size
             ]
 
-        except Exception as e:
-            logger.error(f"❌ Ошибка при поиске: {e}")
-            return []
+            expanded = expand_chunks(
+                seed_chunks,
+                self.graph,
+                hops=1,
+                max_nodes=80,
+            )
 
-    def get_stats(self) -> dict:
+            chunk_to_idx = {
+                rec["chunk_id"]: i
+                for i, rec in enumerate(self.metadata)
+            }
+
+            expanded_idxs = [
+                chunk_to_idx[c]
+                for c in expanded
+                if c in chunk_to_idx
+            ]
+
+            before = len(candidate_idxs)
+            candidate_idxs = list(
+                dict.fromkeys(candidate_idxs + expanded_idxs)
+            )
+            logger.debug(f"Graph expansion: {before} → {len(candidate_idxs)}")
+
+        # --- score vectors ---
+        pos_map = {idx: pos for pos, idx in enumerate(I[0])}
+
+        faiss_raw = np.array(
+            [D[0][pos_map[i]] if i in pos_map else 0.0 for i in candidate_idxs],
+            float,
+        )
+
+        tfidf_raw = np.array(
+            [
+                tfidf_scores[i] if 0 <= i < len(tfidf_scores) else 0.0
+                for i in candidate_idxs
+            ],
+            float,
+        )
+
+        def _norm(x):
+            mn, mx = x.min(), x.max()
+            return (x - mn) / (mx - mn) if mx > mn else np.zeros_like(x)
+
+        faiss_n = _norm(faiss_raw)
+        tfidf_n = _norm(tfidf_raw)
+
+        # --- rerank 1 ---
+        if self.reranker:
+            pairs = [(query, self.metadata[i]["text"]) for i in candidate_idxs]
+            try:
+                r1 = np.array(self.reranker.predict(pairs), float)
+                r1 = _norm(r1)
+            except Exception:
+                r1 = np.zeros(len(candidate_idxs))
+        else:
+            r1 = np.zeros(len(candidate_idxs))
+
+        # --- rerank 2 ---
+        if self.reranker2:
+            top_n = np.argsort(-r1)[:TOP_N_FOR_SECOND_RERANK]
+            pairs2 = [(query, self.metadata[candidate_idxs[i]]["text"]) for i in top_n]
+
+            try:
+                r2_scores = self.reranker2.predict(pairs2)
+            except Exception:
+                r2_scores = [0.0] * len(top_n)
+
+            r2 = np.zeros(len(candidate_idxs))
+            for i, pos in enumerate(top_n):
+                r2[pos] = r2_scores[i]
+
+            r2 = _norm(r2)
+        else:
+            r2 = np.zeros(len(candidate_idxs))
+
+        # --- final fusion ---
+        results = {}
+
+        for pos, idx in enumerate(candidate_idxs):
+            if idx >= self.valid_size:
+                continue
+
+            rec = self.metadata[idx]
+            web_id = rec["web_id"]
+
+            score = (
+                HYBRID_ALPHA * faiss_n[pos]
+                + (1 - HYBRID_ALPHA) * tfidf_n[pos]
+            )
+            score = (1 - RERANK_ALPHA) * score + RERANK_ALPHA * r1[pos]
+            score = (1 - RERANK2_ALPHA) * score + RERANK2_ALPHA * r2[pos]
+
+            if web_id not in results or score > results[web_id]["score"]:
+                results[web_id] = {
+                    "web_id": web_id,
+                    "chunk_id": rec["chunk_id"],
+                    "text": rec["text"],
+                    "score": float(score),
+                }
+
+        return sorted(
+            results.values(),
+            key=lambda x: x["score"],
+            reverse=True,
+        )[:top_k]
+
+    # ------------------------------------------------------------------
+
+    def get_stats(self):
         return {
             "index_size": self.index.ntotal,
             "metadata_size": len(self.metadata),
             "valid_size": self.valid_size,
             "embedding_dim": self.index.d,
-            "vocabulary_size": len(self.tfidf.vocabulary_) if hasattr(self.tfidf, 'vocabulary_') else 0
+            "vocabulary_size": len(self.tfidf.vocabulary_),
         }
 
 
-def run_batch_questions(questions_path: Path = None, output_path: Path = None, top_k: int = 5):
-    if questions_path is None:
-        questions_path = PROCESSED_DIR / "questions.json"
-    if output_path is None:
-        output_path = PROCESSED_DIR / "questions_top5_web_ids_with_chunks.csv"
+# ======================================================================
 
-    logger.info(f"📄 Загружаем вопросы: {questions_path}")
+def run_batch_questions(
+    questions_path: Path | None = None,
+    output_path: Path | None = None,
+    top_k: int = 5,
+):
+    questions_path = questions_path or (PROCESSED_DIR / "questions.json")
+    output_path = output_path or (
+        PROCESSED_DIR / "questions_top5_web_ids_with_chunks.csv"
+    )
 
-    try:
-        df_q = pd.read_json(questions_path, orient="records", dtype=str)
-    except Exception as e:
-        logger.error(f"❌ Ошибка загрузки вопросов: {e}")
-        return
+    df_q = pd.read_json(questions_path, dtype=str)
 
     retriever = Retriever()
 
-    stats = retriever.get_stats()
-    logger.info(f"📊 Статистика Retriever: {stats}")
+    rows = []
 
-    all_results = []
-    processed = 0
+    for _, row in tqdm(
+            df_q.iterrows(),
+            total=len(df_q),
+            desc="Retrieval",
+    ):
 
-    for _, row in df_q.iterrows():
-        q_id = row["q_id"]
-        query = row["query"]
+        hits = retriever.search(row["query"], top_k=top_k)
 
-        try:
-            hits = retriever.search(query, top_k=top_k)
-            processed += 1
+        for rank in range(top_k):
+            if rank < len(hits):
+                h = hits[rank]
+                rows.append(
+                    {
+                        "q_id": row["q_id"],
+                        "rank": rank + 1,
+                        "web_id": h["web_id"],
+                        "chunk_id": h["chunk_id"],
+                        "text": h["text"][:200],
+                        "score": h["score"],
+                    }
+                )
+            else:
+                rows.append(
+                    {
+                        "q_id": row["q_id"],
+                        "rank": rank + 1,
+                        "web_id": "",
+                        "chunk_id": "",
+                        "text": "",
+                        "score": "",
+                    }
+                )
 
-            for rank, hit in enumerate(hits, start=1):
-                all_results.append({
-                    "q_id": q_id,
-                    "rank": rank,
-                    "web_id": hit["web_id"],
-                    "chunk_id": hit["chunk_id"],
-                    "text": hit["text"][:200],
-                    "score": hit["score"]
-                })
-
-            for rank in range(len(hits) + 1, top_k + 1):
-                all_results.append({
-                    "q_id": q_id,
-                    "rank": rank,
-                    "web_id": "",
-                    "chunk_id": "",
-                    "text": "",
-                    "score": ""
-                })
-
-        except Exception as e:
-            logger.error(f"❌ Ошибка обработки {q_id}: {e}")
-            for rank in range(1, top_k + 1):
-                all_results.append({
-                    "q_id": q_id,
-                    "rank": rank,
-                    "web_id": "",
-                    "chunk_id": "",
-                    "text": "",
-                    "score": ""
-                })
-
-    df_res = pd.DataFrame(all_results)
-
-    try:
-        df_res.to_csv(output_path, index=False, encoding="utf-8")
-        logger.info(f"✅ Сохранены результаты: {output_path}")
-        logger.info(f"📈 Обработано вопросов: {processed}/{len(df_q)}")
-    except Exception as e:
-        logger.error(f"❌ Ошибка сохранения результатов: {e}")
-
+    pd.DataFrame(rows).to_csv(output_path, index=False, encoding="utf-8")
 
 if __name__ == "__main__":
     try:
         run_batch_questions(top_k=5)
     except Exception as e:
-        logger.error(f"❌ Ошибка запуска извлечения: {e}")
+        logger.error(f"❌ Launch error: {e}")
