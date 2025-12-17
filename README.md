@@ -1,13 +1,13 @@
 # AURA — Augmented Understanding & Retrieval for Answers
 
 **AURA** — production-oriented RAG-система для поиска и генерации ответов по финтех-корпусу документов.  
-Проект реализует **полный end-to-end пайплайн**: от подготовки данных и построения индексов до генерации финального ответа LLM с указанием источников.
+Проект реализует **полный end-to-end пайплайн**: от очистки данных и построения индексов до генерации финального ответа LLM с указанием источников.
 
-Цель проекта — показать, как можно построить **качественный retrieval**, существенно превосходящий базовый RAG, за счёт гибридного поиска, graph-based расширения кандидатов и transformer-based reranking.
+Ключевой фокус — **качество retrieval**, превосходящее базовый RAG за счёт гибридного поиска, graph-augmented расширения кандидатов и transformer-based reranking.
 
 ---
 
-## 🔹 Ключевые возможности
+## 🚀 Ключевые возможности
 
 ### Hybrid Retrieval
 - TF-IDF (lexical search)
@@ -17,23 +17,23 @@
 ### Graph-Augmented Retrieval
 - Граф связей между чанками документов
 - Расширение кандидатов через граф
-- Улучшение recall и устойчивости retrieval
+- Повышение recall и устойчивости поиска
 
 ### Гибкая подготовка данных
+- Очистка и нормализация текстов
 - Несколько стратегий чанкинга:
   - базовый (по словам)
   - семантический
   - рекурсивный
-- Препроцессинг документов перед чанкингом
 
 ### LLM-driven Query Rewriting
 - Переформулировка пользовательских запросов
-- Повышение полноты и релевантности поиска
+- Повышение полноты и релевантности retrieval
 
 ### LLM Answer Generation
 - Генерация ответа строго на основе найденных документов
-- Контроль контекста и защита от hallucinations
 - Явное указание источников (чанков)
+- Защита от hallucinations
 
 ### Production-ready архитектура
 - Чёткое разделение offline / online этапов
@@ -45,11 +45,13 @@
 ## 🧠 Архитектура пайплайна
 
 ```text
-Raw documents
+Raw CSV / Text Data
     ↓
-Preprocessing + Chunking
+Text Cleaning & Preprocessing
     ↓
-Embeddings + FAISS index
+Chunking (base / semantic / recursive)
+    ↓
+Embeddings + FAISS Index
     ↓
 Chunk Graph Construction
     ↓
@@ -59,9 +61,9 @@ Graph-based Expansion
     ↓
 Transformer Reranking
     ↓
-Top-K Documents
+Top-K Relevant Chunks
     ↓
-LLM Answer Generation
+LLM Answer Generation (with sources)
 ```
 
 ---
@@ -70,50 +72,104 @@ LLM Answer Generation
 
 ```text
 qa-rag-system/
-├── run_pipeline.py
-├── rag_answer.py
-├── api/
-│   └── main.py
+├── chunking/
+│   ├── base.py
+│   ├── semantic.py
+│   ├── recursive.py
+│   └── filters.py
+│
+├── preprocessing/
+│   ├── csv_cleaner.py
+│   └── text_cleaning.py
+│
 ├── data/
 │   ├── raw/
 │   ├── processed/
-│   └── chunks/
+│   ├── loader_websites.py
+│   └── loader_questions.py
+│
 ├── embeddings/
-│   ├── kb_index.faiss
+│   ├── websites_embed.py
 │   ├── kb_vectors.npy
-│   └── kb_metadata.json
+│   ├── kb_index.faiss
+│   ├── kb_metadata.json
+│   └── tfidf_model.pkl
+│
 ├── graph/
 │   ├── build_graph.py
+│   ├── graph_expander.py
 │   ├── graph_store.py
-│   └── graph_expander.py
+│   └── graph_index.pkl
+│
 ├── retrieval/
-│   └── retriever.py
+│   ├── retriever.py
+│   └── pipeline_check.py
+│
 ├── llm/
+│   ├── query_expander.py
 │   ├── answer_generator.py
-│   └── query_preprocessor.py
+│   └── marked_llm.py
+│
+├── tests/
+│   ├── test_embeddings.py
+│   ├── test_retrieval.py
+│   └── test_generation.py
+│
+├── run_pipeline.py
+├── rag_answer.py
+├── pipeline.py
+│
 ├── utils/
 │   └── config.py
-└── tests/
+│
+├── requirements.txt
+├── environment_full.yml
+└── aura.md
 ```
 
 ---
 
-## 🚀 Запуск пайплайна
+## ⚙️ Запуск пайплайна
 
-### Полный offline-пайплайн
+### 1️⃣ Полный offline-пайплайн
 
 ```bash
 python run_pipeline.py
 ```
 
+Этапы:
+- загрузка и очистка документов
+- чанкинг (несколько стратегий)
+- построение эмбеддингов и FAISS-индекса
+- построение графа связей между чанками
+- hybrid retrieval по списку вопросов
+
 ---
 
-## 🤖 RAG inference
+### 2️⃣ Только retrieval (если данные уже подготовлены)
+
+```python
+from run_pipeline import run_retrieval_only
+
+run_retrieval_only()
+```
+
+---
+
+## 🤖 Генерация ответа (RAG inference)
+
+```bash
+python rag_answer.py
+```
 
 ```python
 from rag_answer import answer_query
 
-result = answer_query("Как оплатить кредит через приложение?", top_k=5)
+result = answer_query(
+    "Как оплатить кредит через приложение?",
+    top_k=5
+)
+
 print(result["answer"])
 ```
 
@@ -127,15 +183,14 @@ pytest
 
 ---
 
-## 🛠 Технологии
+## 🛠 Стек технологий
 
-Python, FAISS, Sentence-Transformers, Cross-Encoder, LLM, NetworkX, FastAPI, PyTest
+Python, FAISS, Sentence-Transformers, Cross-Encoder, TF-IDF, NetworkX, LLM, FastAPI, PyTest
 
 ---
 
 ## 📌 Roadmap
 
-- Docker
-- Retrieval metrics
-- UI
-- Streaming LLM
+- Метрики retrieval (Recall@K, MRR)  
+- Chat-интерфейс  
+- Streaming-ответы LLM
