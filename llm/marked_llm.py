@@ -17,9 +17,6 @@ def process_queries(
     mode: str = "paraphrase",  # 'expand' или 'paraphrase'
     n_variants: int = 1,
 ):
-    """
-    Обрабатывает вопросы через LLM и сохраняет новые варианты.
-    """
     input_path = os.path.join(RAW_DATA_DIR, input_filename)
     output_path = os.path.join(OUTPUT_DIR, output_filename)
 
