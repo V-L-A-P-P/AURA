@@ -71,7 +71,7 @@ LLM Answer Generation (with sources)
 ## 📂 Структура проекта
 
 ```text
-qa-rag-system/
+AURA/
 ├── chunking/
 │   ├── base.py
 │   ├── semantic.py
