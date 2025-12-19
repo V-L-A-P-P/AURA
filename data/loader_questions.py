@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def load_questions(csv_path: Path | None = None) -> pd.DataFrame:
+def load_questions(csv_path: Path | None = None, for_test=False) -> pd.DataFrame:
     """
     Load questions from CSV.
     Required columns: q_id, query
@@ -26,7 +26,10 @@ def load_questions(csv_path: Path | None = None) -> pd.DataFrame:
     if not csv_path.exists():
         raise FileNotFoundError(f"Questions file not found: {csv_path}")
 
-    df = pd.read_csv(csv_path, dtype=str)
+    if for_test:
+        df = pd.read_csv(csv_path, dtype=str).iloc[:10]
+    else:
+        df = pd.read_csv(csv_path, dtype=str)
 
     required_cols = {"q_id", "query"}
     missing = required_cols - set(df.columns)
