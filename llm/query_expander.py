@@ -92,165 +92,142 @@ class QueryExpander:
 
     def _build_expand_prompt(self, query: str, n_variants: int) -> str:
         return f"""
-    You must output ONLY the final expanded variants.
+            You must output ONLY the final expanded variants.
+            The output MUST contain nothing except the final expanded sentences.
 
-CRITICAL OUTPUT CONSTRAINTS (NON-NEGOTIABLE):
-- Output MUST contain EXACTLY {n_variants} non-empty lines.
-- EACH line MUST be a final expanded sentence in Russian.
-- ANY extra word, symbol, or line INVALIDATES the entire output.
+            ABSOLUTELY FORBIDDEN under any circumstances:
+            - any reasoning
+            - any explanations
+            - any analysis
+            - any chain-of-thought
+            - any assumptions
+            - any comments
+            - any meta-text
+            - any mention of what you are doing
+            - any reference to rules or instructions
+            - any introductions, transitions, or filler phrases
+            - any statements about the original query
+            - any statements about generating variants
+            - any summaries, clarifications, or descriptions
+            - ANYTHING except the final expanded variants in Russian
 
-ABSOLUTELY FORBIDDEN UNDER ANY CIRCUMSTANCES:
-- any reasoning, explanations, analysis, chain-of-thought
-- any assumptions, comments, or meta-text
-- any mention of what you are doing
-- any reference to rules, instructions, or the prompt
-- any introductions, lead-ins, transitions, or filler phrases
-- any statements about the original query
-- any statements about generating or expanding variants
-- any summaries, clarifications, or descriptions
-- ANYTHING except the final expanded sentences in Russian
+            If your answer contains even one extra word beyond the final sentences, the output is INVALID.
 
-EXPLICIT HARD BAN (PRIORITY):
-The output MUST NOT begin with, contain, or imply the phrase:
-"Okay, let's tackle this."
+            You are an intelligent assistant expanding the original query by adding relevant details, clarifications, related aspects, and real usage scenarios — WITHOUT changing the query’s purpose and WITHOUT producing any reasoning text.
 
-This ban includes ANY variation, partial form, or semantic equivalent, including but not limited to:
-- "Ok, let's tackle this"
-- "Okay let's tackle this"
-- "Alright, let's tackle this"
-- "Let's tackle this"
-- "Let's deal with this"
-- "Let's work through this"
-- "Okay, let's start"
-- "Alright, let's begin"
+            ### STRICT RULES:
+            1. ❗️You MUST NOT change the purpose of the original query.
+            2. ❗️You MUST NOT paraphrase — you must ADD context.
+            3. ❗️Every variant must introduce NEW, concrete information.
+            4. ❗️Each variant must add something meaningful: action, condition, limitation, example, or user motivation.
+            5. ❗️Do NOT remove important information.
+            6. ❗️Do NOT output thoughts, explanations, or any text except final sentences.
+            7. ❗️Your entire output must consist ONLY of the final Russian expanded variants, one per line.
 
-If ANY such phrase or equivalent appears, the ENTIRE OUTPUT is INVALID.
+            Each variant must be natural, detailed, and written in Russian.
 
-CONVERSATIONAL / DISCOURSE BAN:
-The output MUST NOT contain any conversational openings or discourse markers,
-including but not limited to:
-"Okay", "Alright", "So", "Now", "Let's", "First", "Here", "Below", "Sure".
+            ---
 
-ROLE (STRICT):
-You are a deterministic query expansion engine.
-You ONLY expand the original query by adding concrete context.
+            ### Примеры
 
-STRICT SEMANTIC RULES:
-1. You MUST NOT change the purpose or intent of the original query.
-2. You MUST NOT paraphrase the query — ONLY ADD context.
-3. Every variant MUST introduce NEW, concrete information.
-4. Each variant MUST add at least one meaningful element:
-   action, condition, limitation, example, real usage scenario, or user motivation.
-5. You MUST NOT remove or weaken any important information from the original query.
+            Пример 1
+            Исходный запрос: "Как оплатить кредит?"
+            Расширенные версии:
+            - "Как оплатить кредит через мобильное приложение банка, если нет доступа к интернет-банку?"
+            - "Какие способы доступны для оплаты кредита в выходные или праздничные дни?"
+            - "Можно ли оплатить кредит досрочно с другой карты, не своего банка?"
 
-FORM RULES:
-- Each variant must be exactly ONE sentence.
-- Each variant must be natural and detailed.
-- Variants must differ by added context, not by wording only.
-- No numbering, bullets, quotes, emojis, or formatting markers.
+            Пример 2
+            Исходный запрос: "Проблемы с входом в личный кабинет"
+            Расширенные версии:
+            - "Почему не получается войти в личный кабинет после смены пароля?"
+            - "Что делать, если при входе появляется ошибка 'неверный код подтверждения'?"
+            - "Как восстановить доступ, если утерян номер телефона, привязанный к входу?"
 
----
+            Пример 3
+            Исходный запрос: "Как получить карту?"
+            Расширенные версии:
+            - "Как заказать банковскую карту онлайн и получить её на дом?"
+            - "Какие документы нужны, чтобы получить карту в офисе банка?"
+            - "Можно ли оформить карту для несовершеннолетнего ребёнка?"
 
-FEW-SHOT EXAMPLES (PATTERN ONLY, NEVER TO BE REFERENCED):
+            ---
 
-Original query: "Как оплатить кредит?"
-Valid output:
-Как оплатить кредит через мобильное приложение банка, если временно нет доступа к интернет-банку?
-Какие способы доступны для оплаты кредита в выходные или праздничные дни без визита в отделение?
-Можно ли оплатить кредит досрочно с карты другого банка без комиссии?
+            Now process the following query:
 
-Original query: "Проблемы с входом в личный кабинет"
-Valid output:
-Почему не получается войти в личный кабинет после недавней смены пароля?
-Что делать, если при входе в личный кабинет появляется ошибка «неверный код подтверждения»?
-Как восстановить доступ к личному кабинету, если утерян номер телефона, привязанный к входу?
+            Original query: {query}
 
----
-
-Original query: {query}
-
-Generate EXACTLY {n_variants} expanded variants.
-Output NOTHING except those final Russian sentences.
-
-    """
+            Generate {n_variants} expanded variants.
+            Each variant must appear on a new line without numbering.
+            Do NOT output anything except the final expanded sentences.
+            """
 
     def _build_rephrase_prompt(self, query: str, n_variants: int) -> str:
         return f"""You must output ONLY the final rephrased variants.
 
-CRITICAL OUTPUT CONSTRAINTS (NON-NEGOTIABLE):
-- Output MUST consist of EXACTLY {n_variants} non-empty lines.
-- EACH line MUST be a valid rephrased variant of the original query.
-- ANY extra text INVALIDATES the entire output.
+        CRITICAL OUTPUT CONSTRAINTS:
+        - Output MUST consist of EXACTLY {n_variants} non-empty lines.
+        - EACH line MUST be a rephrased variant of the original query.
+        - NO line may contain:
+          • introductions
+          • acknowledgements
+          • confirmations
+          • explanations
+          • reasoning
+          • comments
+          • meta-text
+          • formatting markers
+          • emojis
+          • quotes
+          • numbering or bullet symbols
+          • references to the task, the prompt, or the model itself
+        - Any text that is not a rephrased variant INVALIDATES the entire output.
 
-FORBIDDEN CONTENT (ABSOLUTE BAN):
-The output MUST NOT contain:
-- introductions, lead-ins, acknowledgements, confirmations
-- explanations, reasoning, analysis, comments
-- meta-text or references to the task, prompt, or model
-- formatting markers, quotes, emojis
-- numbering, bullets, prefixes, or suffixes
-- conversational or discourse phrases of any kind
+        ABSOLUTE PROHIBITION:
+        Do NOT output phrases such as (including but not limited to):
+        "Okay", "Sure", "Let's", "Here are", "I will", "Below are", "Certainly",
+        "As an AI", "I'll help", "The following", "Rephrased versions", "Variants",
+        or ANY similar conversational, procedural, or meta expressions.
 
-EXPLICIT HARD BAN (PRIORITY):
-The output MUST NOT begin with, contain, or imply the phrase:
-"Okay, let's tackle this."
+        ROLE:
+        You are a deterministic rephrasing engine.
+        You ONLY transform the user's query into alternative phrasings.
 
-This includes ANY variation, paraphrase, partial form, or semantic equivalent, including but not limited to:
-- "Ok, let's tackle this"
-- "Okay let's tackle this"
-- "Alright, let's tackle this"
-- "Let's tackle this"
-- "Let's deal with this"
-- "Let's work through this"
-- "Okay, let's start"
-- "Alright, let's begin"
+        SEMANTIC CONSTRAINTS:
+        - Preserve the original meaning exactly.
+        - Do NOT add, remove, generalize, or specialize information.
+        - Do NOT change intent, scope, or assumptions.
+        - All key terms and core semantic elements MUST be present in EACH variant.
 
-If ANY such phrase or equivalent appears, the ENTIRE OUTPUT is INVALID.
+        FORM CONSTRAINTS:
+        - Each variant must be a single sentence.
+        - Each variant must be self-contained.
+        - Variants must differ in wording, syntax, or structure, not just punctuation.
 
-CONVERSATIONAL OPENING BAN:
-Any conversational opening or task-introducing construct
-(e.g. "Okay", "Alright", "So", "Now", "Let's", "First", "Here are")
-appearing ANYWHERE in the output INVALIDATES the response.
+        ---
 
-ROLE (STRICT):
-You are a deterministic query rephrasing engine.
-You ONLY transform the user's query into alternative phrasings.
+        FEW-SHOT EXAMPLES (for pattern learning only, never to be referenced in output):
 
-SEMANTIC CONSTRAINTS:
-- Preserve the original meaning EXACTLY.
-- Do NOT add, remove, generalize, or specialize information.
-- Do NOT change intent, scope, assumptions, or domain.
-- ALL key terms and core semantic elements MUST appear in EACH variant.
+        Original query: "Как оплатить кредит?"
+        Valid output:
+        Какие способы оплаты кредита доступны?
+        Как можно внести платеж по кредиту?
+        Каким образом оплатить кредитный долг?
 
-FORM CONSTRAINTS:
-- Each variant must be exactly ONE sentence.
-- Each variant must be self-contained.
-- Variants must differ in wording, syntax, or structure (not punctuation-only).
+        Original query: "Проблемы с входом в личный кабинет"
+        Valid output:
+        Не получается войти в личный кабинет
+        Ошибка при попытке входа в личный кабинет
+        Почему не удается авторизоваться в личном кабинете?
 
----
+        ---
 
-FEW-SHOT EXAMPLES (PATTERN ONLY, NEVER TO BE REFERENCED):
+        Original query: {query}
 
-Original query: "Как оплатить кредит?"
-Valid output:
-Какие способы оплаты кредита доступны?
-Как можно внести платеж по кредиту?
-Каким образом оплатить кредитный долг?
+        Generate EXACTLY {n_variants} lines.
+        Output NOTHING except those lines.
 
-Original query: "Проблемы с входом в личный кабинет"
-Valid output:
-Не получается войти в личный кабинет
-Ошибка при попытке входа в личный кабинет
-Почему не удается авторизоваться в личном кабинете?
-
----
-
-Original query: {query}
-
-Generate EXACTLY {n_variants} lines.
-Output NOTHING except those lines.
-
-        """
+                """
 
     def expand_query(self, query: str, n_variants: int = 3) -> list[str]:
         prompt = self._build_expand_prompt(query, n_variants)
