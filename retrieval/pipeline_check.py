@@ -1,6 +1,3 @@
-"""
-validate_pipeline.py — consistency checks for RAG pipeline artifacts
-"""
 
 import json
 import logging
@@ -13,10 +10,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------
-
 def validate_chunks_and_embeddings() -> bool:
-    """Validate consistency between chunks, metadata and FAISS index"""
 
     logger.info("Validating chunks and embeddings...")
 
@@ -71,10 +65,7 @@ def validate_chunks_and_embeddings() -> bool:
     return True
 
 
-# ---------------------------------------------------------------------
-
 def validate_questions() -> bool:
-    """Validate processed questions file"""
 
     logger.info("Validating questions...")
 
@@ -103,8 +94,6 @@ def validate_questions() -> bool:
         logger.error(f"Failed to read questions: {e}")
         return False
 
-
-# ---------------------------------------------------------------------
 
 if __name__ == "__main__":
     logger.info("Running pipeline validation")
