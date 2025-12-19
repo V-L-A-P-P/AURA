@@ -1,61 +1,63 @@
 # AURA — Augmented Understanding & Retrieval for Answers
 
-**AURA** — production-oriented RAG-система для поиска и генерации ответов по финтех-корпусу документов.  
+**AURA** — production-oriented RAG-система для поиска и генерации ответов по финтех-корпусу документов.
 Проект реализует **полный end-to-end пайплайн**: от очистки данных и построения индексов до генерации финального ответа LLM с указанием источников.
 
-Ключевой фокус — **качество retrieval**, превосходящее базовый RAG за счёт гибридного поиска, graph-augmented расширения кандидатов и transformer-based reranking.
+Ключевой фокус — **качество retrieval**, превосходящее базовый RAG за счёт гибридного поиска, graph-augmented расширения кандидатов, LLM-driven query rewriting и transformer-based reranking.
 
 ---
 
 ## 🚀 Ключевые возможности
 
-### Hybrid Retrieval
-- TF-IDF (lexical search)
-- Dense retrieval через FAISS
-- Двухэтапный transformer-based cross-encoder reranking
+### 🔹 Hybrid Retrieval
 
-### Graph-Augmented Retrieval
-- Граф связей между чанками документов
-- Расширение кандидатов через граф
-- Повышение recall и устойчивости поиска
+* TF-IDF (lexical search)
+* Dense retrieval через FAISS
+* Двухэтапный transformer-based cross-encoder reranking
 
-### Гибкая подготовка данных
-- Очистка и нормализация текстов
-- Несколько стратегий чанкинга:
-  - базовый (по словам)
-  - семантический
-  - рекурсивный
+### 🔹 Graph-Augmented Retrieval
 
-### LLM-driven Query Rewriting
-- Переформулировка пользовательских запросов
-- Повышение полноты и релевантности retrieval
+* Граф связей между чанками документов
+* Расширение кандидатов через граф
+* Повышение recall и устойчивости поиска
 
-### LLM Answer Generation
-- Генерация ответа строго на основе найденных документов
-- Явное указание источников (чанков)
-- Защита от hallucinations
+### 🔹 Гибкая подготовка данных
 
-### Production-ready архитектура
-- Чёткое разделение offline / online этапов
-- Тестируемые компоненты (PyTest)
-- Подготовка к API и деплою
+* Очистка и нормализация текстов
+* Несколько стратегий чанкинга:
+
+  * базовый (по словам)
+  * семантический
+  * рекурсивный
+
+### 🔹 LLM-driven Query Rewriting
+
+* Перефразирование пользовательского запроса перед retrieval
+* Используется instruction-tuned LLM
+* Повышает полноту и устойчивость поиска при коротких или неявных запросах
+
+### 🔹 LLM Answer Generation
+
+* Генерация ответа строго на основе найденных документов
+* Явное указание источников (чанков)
+* Защита от hallucinations
+
+### 🔹 Production-ready архитектура
+
+* Чёткое разделение offline / online этапов
+* Тестируемые компоненты (PyTest)
+* API для онлайн-инференса (FastAPI)
 
 ---
 
 ## 🧠 Архитектура пайплайна
 
 ```text
-Raw CSV / Text Data
+User Query
     ↓
-Text Cleaning & Preprocessing
+LLM Query Rewriting
     ↓
-Chunking (base / semantic / recursive)
-    ↓
-Embeddings + FAISS Index
-    ↓
-Chunk Graph Construction
-    ↓
-Hybrid Retrieval (TF-IDF + Dense)
+Hybrid Retrieval (TF-IDF + FAISS)
     ↓
 Graph-based Expansion
     ↓
@@ -110,6 +112,9 @@ AURA/
 │   ├── answer_generator.py
 │   └── marked_llm.py
 │
+├── api/
+│   └── main.py
+│
 ├── tests/
 │   ├── test_embeddings.py
 │   ├── test_retrieval.py
@@ -124,7 +129,7 @@ AURA/
 │
 ├── requirements.txt
 ├── environment_full.yml
-└── aura.md
+└── aura2.md
 ```
 
 ---
@@ -138,25 +143,14 @@ python run_pipeline.py
 ```
 
 Этапы:
-- загрузка и очистка документов
-- чанкинг (несколько стратегий)
-- построение эмбеддингов и FAISS-индекса
-- построение графа связей между чанками
-- hybrid retrieval по списку вопросов
 
----
+* загрузка и очистка документов
+* чанкинг (несколько стратегий)
+* построение эмбеддингов и FAISS-индекса
+* построение графа связей между чанками
+* hybrid retrieval по списку вопросов
 
-### 2️⃣ Только retrieval (если данные уже подготовлены)
-
-```python
-from run_pipeline import run_retrieval_only
-
-run_retrieval_only()
-```
-
----
-
-## 🤖 Генерация ответа (RAG inference)
+### 2️⃣ Генерация ответа (локально)
 
 ```bash
 python rag_answer.py
@@ -171,6 +165,76 @@ result = answer_query(
 )
 
 print(result["answer"])
+```
+
+---
+
+## 🌐 API (FastAPI)
+
+Запуск сервиса:
+
+```bash
+uvicorn api.main:app --host 0.0.0.0 --port 8000
+```
+
+Пример запроса:
+
+```http
+POST /answer
+Content-Type: application/json
+
+{
+  "query": "Как оплатить кредит через мобильное приложение банка?",
+  "top_k": 5
+}
+```
+
+API возвращает:
+
+* исходный вопрос
+* найденные релевантные чанки
+* финальный ответ LLM с указанием источников
+
+---
+
+## 📘 Пример работы системы
+
+**Question:**
+
+Как оплатить кредит через мобильное приложение банка?
+
+**Found documents:**
+
+```
+[DOC 1]
+В мобильном приложении банка доступна оплата кредитов с дебетовой карты,
+а также настройка автоматического ежемесячного платежа.
+
+[DOC 2]
+В приложении можно посмотреть график платежей по кредиту и сумму
+обязательного платежа на текущий месяц.
+
+[DOC 3]
+Документ описывает условия оформления нового кредита.
+```
+
+**ANSWER:**
+
+Оплатить кредит через мобильное приложение банка можно с помощью встроенной
+функции оплаты кредитов. В приложении доступен перевод средств с дебетовой
+карты на кредитный счёт, а также возможность настроить автоматический платёж
+на нужную дату [DOC 1].
+
+Дополнительно в приложении можно проверить график платежей и сумму
+обязательного взноса за текущий месяц, чтобы избежать просрочек [DOC 2].
+
+```
+[DOC 1]: Relevant — содержит прямую информацию о способах оплаты кредита
+через мобильное приложение.
+
+[DOC 2]: Relevant — дополняет ответ информацией о контроле платежей.
+
+[DOC 3]: Not relevant — относится к оформлению кредита, а не к его оплате.
 ```
 
 ---
@@ -191,6 +255,6 @@ Python, FAISS, Sentence-Transformers, Cross-Encoder, TF-IDF, NetworkX, LLM, Fast
 
 ## 📌 Roadmap
 
-- Метрики retrieval (Recall@K, MRR)  
-- Chat-интерфейс  
-- Streaming-ответы LLM
+* Метрики retrieval (Recall@K, MRR)
+* Chat-интерфейс
+* Streaming-ответы LLM
