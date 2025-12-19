@@ -1,8 +1,3 @@
-"""
-run_pipeline.py — main entry point for the RAG pipeline.
-Runs all pipeline stages sequentially.
-"""
-
 import logging
 
 from utils.config import BASE_DIR
@@ -28,25 +23,20 @@ def run_full_pipeline() -> None:
     logger.info("Starting full RAG pipeline")
 
     try:
-        # Stage 1: Load and chunk documents
         logger.info("Stage 1: Loading and chunking documents")
-        df_docs = load_websites()
+        df_docs = load_websites(for_test=True)
         process_and_chunk(df_docs, max_words=600, overlap_words=100)
 
-        # Stage 2: Build embeddings and FAISS index
         logger.info("Stage 2: Building embeddings")
         build_kb_embeddings(batch_size=32)
 
-        # Stage 3: Prepare questions
         logger.info("Stage 3: Preparing questions")
-        df_questions = load_questions()
+        df_questions = load_questions(for_test=True)
         save_processed_questions(df_questions)
 
-        # Stage 4: Build and save chunk graph
         logger.info("Stage 4: Building chunk graph")
         build_and_save_graph(GRAPH_PATH)
 
-        # Stage 5: Retrieval
         logger.info("Stage 5: Running retrieval")
         run_batch_questions(top_k=5)
 
@@ -58,7 +48,6 @@ def run_full_pipeline() -> None:
 
 
 def run_retrieval_only() -> None:
-    """Run retrieval only (assumes all data is already prepared)."""
     logger.info("Running retrieval only")
     run_batch_questions(top_k=5)
     logger.info("Retrieval finished")
@@ -66,5 +55,3 @@ def run_retrieval_only() -> None:
 
 if __name__ == "__main__":
     run_full_pipeline()
-    # Alternatively:
-    # run_retrieval_only()
