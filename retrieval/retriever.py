@@ -92,7 +92,6 @@ class Retriever:
             except Exception as e:
                 logger.warning(f"Reranker-2 disabled: {e}")
 
-    # ------------------------------------------------------------------
 
     def _validate_data_consistency(self):
         index_size = self.index.ntotal
@@ -104,7 +103,6 @@ class Retriever:
                 f"Index/metadata mismatch: {index_size} vs {meta_size}"
             )
 
-    # ------------------------------------------------------------------
 
     def _load_or_create_tfidf(self):
         tfidf_path = EMBEDDINGS_DIR / "tfidf_model.pkl"
@@ -144,7 +142,6 @@ class Retriever:
 
         logger.info("TF-IDF trained")
 
-    # ------------------------------------------------------------------
 
     def search(self, query: str, top_k: int = 5, candidate_factor: int = 3):
         if not query or not query.strip():
@@ -286,7 +283,6 @@ class Retriever:
             reverse=True,
         )[:top_k]
 
-    # ------------------------------------------------------------------
 
     def get_stats(self):
         return {
@@ -298,7 +294,6 @@ class Retriever:
         }
 
 
-# ======================================================================
 
 def run_batch_questions(
     questions_path: Path | None = None,
@@ -353,6 +348,8 @@ def run_batch_questions(
 
 if __name__ == "__main__":
     try:
-        run_batch_questions(top_k=5)
+        #run_batch_questions(top_k=5)
+        r = Retriever()
+        print(r.search("Как оплатить кредит через приложение?"))
     except Exception as e:
         logger.error(f"❌ Launch error: {e}")
