@@ -7,13 +7,13 @@ import pickle
 from pathlib import Path
 from tqdm import tqdm
 
-
 import torch
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from graph.graph_store import load_graph
 from graph.graph_expander import expand_chunks
+from llm.query_expander import QueryExpander
 
 from utils.config import (
     EMBEDDINGS_DIR,
@@ -38,6 +38,8 @@ class Retriever:
         index_path: Path | None = None,
         meta_path: Path | None = None,
         model_name: str = EMBEDDING_MODEL,
+        use_query_expander: bool = False,
+        query_expander_mode: str = "expand",  # "expand" | "paraphrase"
     ):
         # --- graph ---
         try:
@@ -65,6 +67,20 @@ class Retriever:
         self.model = SentenceTransformer(model_name)
 
         self._load_or_create_tfidf()
+
+        # --- query expander ---
+        self.query_expander = None
+        self.query_expander_mode = query_expander_mode
+
+        if use_query_expander:
+            try:
+                self.query_expander = QueryExpander(
+                    device="cuda" if torch.cuda.is_available() else "cpu"
+                )
+                logger.info("QueryExpander enabled")
+            except Exception as e:
+                logger.warning(f"QueryExpander disabled: {e}")
+                self.query_expander = None
 
         # --- reranker 1 ---
         self.reranker = None
@@ -147,8 +163,23 @@ class Retriever:
         if not query or not query.strip():
             return []
 
+        # --- query expansion (single variant) ---
+        search_query = query
+
+        if self.query_expander:
+            try:
+                expanded = self.query_expander.generate(
+                    query,
+                    mode=self.query_expander_mode,
+                    n_variants=1,
+                )
+                if expanded:
+                    search_query = expanded[0]
+            except Exception as e:
+                logger.warning(f"Query expansion failed: {e}")
+        print(search_query)
         # --- dense search ---
-        q_vec = self.model.encode([query], convert_to_numpy=True).astype("float32")
+        q_vec = self.model.encode([search_query], convert_to_numpy=True).astype("float32")
         faiss.normalize_L2(q_vec)
 
         n_candidates = min(
@@ -160,7 +191,7 @@ class Retriever:
         D, I = self.index.search(q_vec, n_candidates)
 
         # --- sparse search ---
-        q_tfidf = self.tfidf.transform([query])
+        q_tfidf = self.tfidf.transform([search_query])
         tfidf_scores = (self.tfidf_matrix @ q_tfidf.T).toarray().ravel()
         top_sparse = np.argsort(-tfidf_scores)[:n_candidates]
 
@@ -194,11 +225,9 @@ class Retriever:
                 if c in chunk_to_idx
             ]
 
-            before = len(candidate_idxs)
             candidate_idxs = list(
                 dict.fromkeys(candidate_idxs + expanded_idxs)
             )
-            logger.debug(f"Graph expansion: {before} → {len(candidate_idxs)}")
 
         # --- score vectors ---
         pos_map = {idx: pos for pos, idx in enumerate(I[0])}
@@ -225,7 +254,7 @@ class Retriever:
 
         # --- rerank 1 ---
         if self.reranker:
-            pairs = [(query, self.metadata[i]["text"]) for i in candidate_idxs]
+            pairs = [(search_query, self.metadata[i]["text"]) for i in candidate_idxs]
             try:
                 r1 = np.array(self.reranker.predict(pairs), float)
                 r1 = _norm(r1)
@@ -237,7 +266,10 @@ class Retriever:
         # --- rerank 2 ---
         if self.reranker2:
             top_n = np.argsort(-r1)[:TOP_N_FOR_SECOND_RERANK]
-            pairs2 = [(query, self.metadata[candidate_idxs[i]]["text"]) for i in top_n]
+            pairs2 = [
+                (search_query, self.metadata[candidate_idxs[i]]["text"])
+                for i in top_n
+            ]
 
             try:
                 r2_scores = self.reranker2.predict(pairs2)
@@ -294,11 +326,16 @@ class Retriever:
         }
 
 
-
 def run_batch_questions(
     questions_path: Path | None = None,
     output_path: Path | None = None,
     top_k: int = 5,
+    *,
+    use_query_expander: bool = False,
+    query_expander_mode: str = "expand",
+    index_path: Path | None = None,
+    meta_path: Path | None = None,
+    model_name: str = EMBEDDING_MODEL,
 ):
     questions_path = questions_path or (PROCESSED_DIR / "questions.json")
     output_path = output_path or (
@@ -307,16 +344,26 @@ def run_batch_questions(
 
     df_q = pd.read_json(questions_path, dtype=str)
 
-    retriever = Retriever()
+    required_cols = {"q_id", "query"}
+    missing = required_cols - set(df_q.columns)
+    if missing:
+        raise ValueError(f"Missing columns in questions.json: {sorted(missing)}")
 
-    rows = []
+    retriever = Retriever(
+        index_path=index_path,
+        meta_path=meta_path,
+        model_name=model_name,
+        use_query_expander=use_query_expander,
+        query_expander_mode=query_expander_mode,
+    )
+
+    rows: list[dict] = []
 
     for _, row in tqdm(
-            df_q.iterrows(),
-            total=len(df_q),
-            desc="Retrieval",
+        df_q.iterrows(),
+        total=len(df_q),
+        desc="Retrieval",
     ):
-
         hits = retriever.search(row["query"], top_k=top_k)
 
         for rank in range(top_k):
@@ -345,11 +392,12 @@ def run_batch_questions(
                 )
 
     pd.DataFrame(rows).to_csv(output_path, index=False, encoding="utf-8")
+    logger.info(f"Saved: {output_path}")
 
 if __name__ == "__main__":
     try:
         #run_batch_questions(top_k=5)
-        r = Retriever()
+        r = Retriever(use_query_expander=True, query_expander_mode='paraphrase')
         print(r.search("Как оплатить кредит через приложение?"))
     except Exception as e:
         logger.error(f"❌ Launch error: {e}")
