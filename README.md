@@ -71,26 +71,12 @@
 * API для онлайн-инференса (FastAPI)
 
 ---
+Схема работы системы от offline подготовки до online инференса:
 <img width="1280" height="580" alt="image" src="https://github.com/user-attachments/assets/e3d6dfac-03ac-4b8e-bccd-417aa79668ce" />
 
 
 ## 🧠 Архитектура пайплайна
 
-```text
-User Query
-    ↓
-LLM Query Rewriting
-    ↓
-Hybrid Retrieval (TF-IDF + FAISS)
-    ↓
-Graph-based Expansion
-    ↓
-Transformer Reranking
-    ↓
-Top-K Relevant Chunks
-    ↓
-LLM Answer Generation (with sources)
-```
 <img width="1280" height="467" alt="image" src="https://github.com/user-attachments/assets/3c42375d-b80d-4bff-bac0-c028c163c00c" />
 
 ---
