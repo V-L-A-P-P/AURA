@@ -1,4 +1,5 @@
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/325bd767-abca-4b50-9af8-b33a54d4d053" />
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/768e7481-7ec6-4388-aeea-fcea86e65075" />
+
 
 # AURA — Augmented Understanding & Retrieval for Answers
 
