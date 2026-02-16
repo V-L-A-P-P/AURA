@@ -1,3 +1,5 @@
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/325bd767-abca-4b50-9af8-b33a54d4d053" />
+
 # AURA — Augmented Understanding & Retrieval for Answers
 
 **AURA** — production-oriented RAG-система для поиска и генерации ответов по финтех-корпусу документов.
